@@ -1,0 +1,35 @@
+# Data files (large, generated)
+epstein_doj_files/
+data/*.json
+*.json
+!package.json
+
+# Download artifacts
+download_log.txt
+files/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

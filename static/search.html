@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Epstein DOJ Files — Document Search</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --paper: #FAF8F3;
+            --ink-dark: #1A1512;
+            --ink-medium: #463E3A;
+            --ink-light: #8A817C;
+            --accent: #C1440E;
+            --accent-muted: #D4774E;
+            --border: #E0D9CF;
+            --highlight: #FFF4E6;
+            --shadow: rgba(26, 21, 18, 0.08);
+        }
+
+        body {
+            font-family: 'Crimson Pro', Georgia, serif;
+            background: var(--paper);
+            color: var(--ink-dark);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* Background texture */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(26, 21, 18, 0.01) 2px, rgba(26, 21, 18, 0.01) 4px);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        /* Header */
+        header {
+            border-bottom: 3px solid var(--ink-dark);
+            padding: 3rem 0 2rem;
+            margin-bottom: 3rem;
+            position: relative;
+        }
+
+        header::after {
+            content: '';
+            position: absolute;
+            bottom: -6px;
+            left: 0;
+            width: 100%;
+            height: 1px;
+            background: var(--accent);
+        }
+
+        h1 {
+            font-size: 4rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            line-height: 1;
+            margin-bottom: 0.5rem;
+            color: var(--ink-dark);
+        }
+
+        .subtitle {
+            font-size: 1.25rem;
+            color: var(--ink-medium);
+            font-weight: 400;
+            letter-spacing: 0.02em;
+        }
+
+        /* Search Section */
+        .search-section {
+            margin-bottom: 3rem;
+            background: white;
+            border: 2px solid var(--ink-dark);
+            box-shadow: 8px 8px 0 var(--shadow);
+            position: relative;
+        }
+
+        .search-section::before {
+            content: '';
+            position: absolute;
+            top: -6px;
+            left: 20px;
+            right: 20px;
+            height: 2px;
+            background: var(--accent);
+        }
+
+        .search-header {
+            background: var(--ink-dark);
+            color: var(--paper);
+            padding: 1.5rem 2rem;
+            border-bottom: 2px solid var(--ink-dark);
+        }
+
+        .search-header h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+
+        .search-body {
+            padding: 2rem;
+        }
+
+        .search-wrapper {
+            position: relative;
+            margin-bottom: 1.5rem;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 1.25rem 4rem 1.25rem 1.5rem;
+            font-family: 'Crimson Pro', Georgia, serif;
+            font-size: 1.25rem;
+            border: 2px solid var(--border);
+            background: var(--paper);
+            color: var(--ink-dark);
+            transition: all 0.3s ease;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 4px rgba(193, 68, 14, 0.1);
+        }
+
+        .search-button {
+            position: absolute;
+            right: 0.5rem;
+            top: 50%;
+            transform: translateY(-50%);
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 0.75rem 2rem;
+            font-family: 'Crimson Pro', Georgia, serif;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .search-button:hover {
+            background: var(--ink-dark);
+        }
+
+        .search-button:active {
+            transform: translateY(-50%) scale(0.98);
+        }
+
+        .search-options {
+            display: flex;
+            gap: 2rem;
+            flex-wrap: wrap;
+            padding: 1.5rem 0 0;
+            border-top: 1px solid var(--border);
+        }
+
+        .option-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .option-group label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: var(--ink-medium);
+            cursor: pointer;
+            user-select: none;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .option-group input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: var(--accent);
+        }
+
+        /* Stats */
+        .stats {
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 2rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: var(--ink-medium);
+        }
+
+        .stat {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .stat-number {
+            font-weight: 600;
+            color: var(--accent);
+            font-size: 1.25rem;
+        }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 4rem;
+            font-size: 1.25rem;
+            color: var(--ink-medium);
+            display: none;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 1rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Results */
+        .results {
+            display: none;
+        }
+
+        .results.active {
+            display: block;
+        }
+
+        .results-header {
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid var(--ink-dark);
+        }
+
+        .results-count {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--ink-dark);
+        }
+
+        .result-item {
+            background: white;
+            border: 2px solid var(--ink-dark);
+            margin-bottom: 2rem;
+            box-shadow: 6px 6px 0 var(--shadow);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            animation: slideIn 0.4s ease;
+        }
+
+        .result-item:hover {
+            transform: translateX(2px) translateY(-2px);
+            box-shadow: 8px 8px 0 var(--shadow);
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .result-header {
+            background: var(--ink-dark);
+            color: var(--paper);
+            padding: 1.25rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            border-bottom: 2px solid var(--ink-dark);
+        }
+
+        .result-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            flex: 1;
+            word-break: break-word;
+        }
+
+        .result-badge {
+            background: var(--accent);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            font-weight: 500;
+            border-radius: 2px;
+            white-space: nowrap;
+            margin-left: 1rem;
+        }
+
+        .result-meta {
+            padding: 1rem 1.5rem;
+            background: var(--highlight);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 2rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: var(--ink-medium);
+        }
+
+        .result-body {
+            padding: 1.5rem;
+        }
+
+        .match-context {
+            background: var(--paper);
+            border-left: 4px solid var(--accent);
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            font-size: 1.125rem;
+            line-height: 1.7;
+            position: relative;
+        }
+
+        .match-context:last-child {
+            margin-bottom: 0;
+        }
+
+        .match-context mark {
+            background: var(--accent);
+            color: white;
+            padding: 0.125rem 0.25rem;
+            font-weight: 600;
+        }
+
+        .match-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--ink-light);
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* No results */
+        .no-results {
+            text-align: center;
+            padding: 4rem;
+            display: none;
+        }
+
+        .no-results.active {
+            display: block;
+        }
+
+        .no-results-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            opacity: 0.3;
+        }
+
+        .no-results-text {
+            font-size: 1.5rem;
+            color: var(--ink-medium);
+            margin-bottom: 0.5rem;
+        }
+
+        .no-results-hint {
+            color: var(--ink-light);
+            font-size: 1rem;
+        }
+
+        /* PDF Viewer Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(26, 21, 18, 0.95);
+            z-index: 1000;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal-content {
+            background: white;
+            width: 95%;
+            height: 95%;
+            max-width: 1400px;
+            border: 3px solid var(--ink-dark);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            animation: slideUp 0.3s ease;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .modal-header {
+            background: var(--ink-dark);
+            color: var(--paper);
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--ink-dark);
+        }
+
+        .modal-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            flex: 1;
+            word-break: break-word;
+        }
+
+        .modal-close {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 0.5rem 1.5rem;
+            font-family: 'Crimson Pro', Georgia, serif;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-left: 1rem;
+        }
+
+        .modal-close:hover {
+            background: var(--ink-dark);
+            transform: scale(1.05);
+        }
+
+        .modal-body {
+            flex: 1;
+            overflow: hidden;
+            background: var(--paper);
+        }
+
+        .pdf-viewer {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .pdf-error {
+            padding: 4rem;
+            text-align: center;
+            color: var(--ink-medium);
+        }
+
+        .pdf-error-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            opacity: 0.3;
+        }
+
+        /* PDF Link in results */
+        .pdf-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--accent);
+            color: white;
+            padding: 0.5rem 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+            text-decoration: none;
+            margin-top: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .pdf-link:hover {
+            background: var(--ink-dark);
+            transform: translateX(2px);
+        }
+
+        .pdf-link::before {
+            content: '📄';
+            font-size: 1rem;
+        }
+
+        /* Footer */
+        footer {
+            margin-top: 4rem;
+            padding: 2rem 0;
+            border-top: 2px solid var(--border);
+            text-align: center;
+            color: var(--ink-light);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2.5rem;
+            }
+
+            .search-section {
+                box-shadow: 4px 4px 0 var(--shadow);
+            }
+
+            .search-body {
+                padding: 1.5rem;
+            }
+
+            .search-button {
+                position: static;
+                transform: none;
+                width: 100%;
+                margin-top: 1rem;
+            }
+
+            .search-input {
+                padding: 1.25rem 1.5rem;
+            }
+
+            .stats {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .result-header {
+                flex-direction: column;
+                gap: 0.75rem;
+            }
+
+            .result-badge {
+                margin-left: 0;
+            }
+
+            .result-meta {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Epstein DOJ Files</h1>
+            <p class="subtitle">Document Search & Analysis System</p>
+        </header>
+
+        <main>
+            <div class="search-section">
+                <div class="search-header">
+                    <h2>Search Documents</h2>
+                </div>
+                <div class="search-body">
+                    <div class="search-wrapper">
+                        <input 
+                            type="text" 
+                            id="searchInput" 
+                            class="search-input" 
+                            placeholder="Enter search terms (e.g., 'Epstein AND Maxwell' or 'flight OR island')"
+                            autocomplete="off"
+                        >
+                        <button id="searchButton" class="search-button">Search</button>
+                    </div>
+                    
+                    <div class="search-options">
+                        <div class="option-group">
+                            <input type="checkbox" id="caseSensitive">
+                            <label for="caseSensitive">Case Sensitive</label>
+                        </div>
+                        <div class="option-group">
+                            <input type="checkbox" id="wholeWord">
+                            <label for="wholeWord">Whole Words Only</label>
+                        </div>
+                        <div class="option-group">
+                            <input type="checkbox" id="regex">
+                            <label for="regex">Regular Expression</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats" id="stats" style="display: none;">
+                <div class="stat">
+                    <span class="stat-number" id="totalDocs">0</span>
+                    <span>Documents Loaded</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-number" id="totalPages">0</span>
+                    <span>Total Pages</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-number" id="searchTime">0</span>
+                    <span>Search Time (ms)</span>
+                </div>
+            </div>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Loading documents...</p>
+            </div>
+
+            <div class="results" id="results">
+                <div class="results-header">
+                    <div class="results-count" id="resultsCount"></div>
+                </div>
+                <div id="resultsContainer"></div>
+            </div>
+
+            <div class="no-results" id="noResults">
+                <div class="no-results-icon">📄</div>
+                <div class="no-results-text">No documents found</div>
+                <div class="no-results-hint">Try different search terms or check your filters</div>
+            </div>
+        </main>
+
+        <!-- PDF Viewer Modal -->
+        <div class="modal" id="pdfModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div class="modal-title" id="pdfModalTitle">Document Viewer</div>
+                    <button class="modal-close" onclick="closePdfModal()">Close</button>
+                </div>
+                <div class="modal-body" id="pdfModalBody">
+                    <iframe class="pdf-viewer" id="pdfViewer"></iframe>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>Epstein DOJ Files Search System — Data from justice.gov/epstein/doj-disclosures</p>
+        </footer>
+    </div>
+
+    <script>
+        // Global state
+        let documents = [];
+        let currentResults = [];
+
+        // Load documents
+        async function loadDocuments() {
+            const loadingEl = document.getElementById('loading');
+            loadingEl.classList.add('active');
+
+            try {
+                // Try data/ directory first, then fall back to root
+                let response = await fetch('/data/epstein_pdfs_search_index.json');
+                if (!response.ok) {
+                    response = await fetch('/epstein_pdfs_search_index.json');
+                }
+                documents = await response.json();
+                
+                loadingEl.classList.remove('active');
+                
+                // Show stats
+                const statsEl = document.getElementById('stats');
+                statsEl.style.display = 'flex';
+                
+                document.getElementById('totalDocs').textContent = documents.length;
+                const totalPages = documents.reduce((sum, doc) => sum + (doc.pages || 0), 0);
+                document.getElementById('totalPages').textContent = totalPages.toLocaleString();
+                
+                console.log(`Loaded ${documents.length} documents`);
+            } catch (error) {
+                loadingEl.innerHTML = `
+                    <div class="no-results-icon">⚠️</div>
+                    <div class="no-results-text">Error loading documents</div>
+                    <div class="no-results-hint">${error.message}</div>
+                    <div style="margin-top: 1rem; color: var(--ink-light);">
+                        Make sure 'epstein_pdfs_search_index.json' is in the same directory as this HTML file.
+                    </div>
+                `;
+            }
+        }
+
+        // Search function
+        function search(query) {
+            const startTime = performance.now();
+            
+            const caseSensitive = document.getElementById('caseSensitive').checked;
+            const wholeWord = document.getElementById('wholeWord').checked;
+            const useRegex = document.getElementById('regex').checked;
+            
+            const results = [];
+            
+            // Parse query for AND/OR
+            let searchTerms = [];
+            let operator = 'SINGLE';
+            
+            if (query.includes(' AND ')) {
+                searchTerms = query.split(' AND ').map(t => t.trim());
+                operator = 'AND';
+            } else if (query.includes(' OR ')) {
+                searchTerms = query.split(' OR ').map(t => t.trim());
+                operator = 'OR';
+            } else {
+                searchTerms = [query];
+            }
+            
+            // Search each document
+            for (const doc of documents) {
+                const text = doc.text || '';
+                const matches = [];
+                
+                if (operator === 'AND') {
+                    // All terms must match
+                    let allMatch = true;
+                    for (const term of searchTerms) {
+                        if (!searchInText(text, term, caseSensitive, wholeWord, useRegex)) {
+                            allMatch = false;
+                            break;
+                        }
+                    }
+                    if (allMatch) {
+                        // Get contexts for all terms
+                        for (const term of searchTerms) {
+                            matches.push(...getContexts(text, term, caseSensitive, wholeWord, useRegex));
+                        }
+                    }
+                } else if (operator === 'OR') {
+                    // Any term can match
+                    for (const term of searchTerms) {
+                        if (searchInText(text, term, caseSensitive, wholeWord, useRegex)) {
+                            matches.push(...getContexts(text, term, caseSensitive, wholeWord, useRegex));
+                        }
+                    }
+                } else {
+                    // Single term
+                    if (searchInText(text, query, caseSensitive, wholeWord, useRegex)) {
+                        matches.push(...getContexts(text, query, caseSensitive, wholeWord, useRegex));
+                    }
+                }
+                
+                if (matches.length > 0) {
+                    results.push({
+                        ...doc,
+                        matches: matches.slice(0, 5) // Limit to 5 contexts per doc
+                    });
+                }
+            }
+            
+            const endTime = performance.now();
+            const searchTime = Math.round(endTime - startTime);
+            document.getElementById('searchTime').textContent = searchTime;
+            
+            return results;
+        }
+
+        // Helper: search in text
+        function searchInText(text, term, caseSensitive, wholeWord, useRegex) {
+            try {
+                let pattern = term;
+                let flags = caseSensitive ? 'g' : 'gi';
+                
+                if (!useRegex) {
+                    pattern = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                }
+                
+                if (wholeWord) {
+                    pattern = `\\b${pattern}\\b`;
+                }
+                
+                const regex = new RegExp(pattern, flags);
+                return regex.test(text);
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // Helper: get contexts
+        function getContexts(text, term, caseSensitive, wholeWord, useRegex, contextSize = 200) {
+            const contexts = [];
+            
+            try {
+                let pattern = term;
+                let flags = caseSensitive ? 'g' : 'gi';
+                
+                if (!useRegex) {
+                    pattern = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                }
+                
+                if (wholeWord) {
+                    pattern = `\\b${pattern}\\b`;
+                }
+                
+                const regex = new RegExp(pattern, flags);
+                let match;
+                
+                while ((match = regex.exec(text)) !== null) {
+                    const start = Math.max(0, match.index - contextSize);
+                    const end = Math.min(text.length, match.index + match[0].length + contextSize);
+                    
+                    let context = text.substring(start, end);
+                    
+                    if (start > 0) context = '...' + context;
+                    if (end < text.length) context = context + '...';
+                    
+                    contexts.push({
+                        text: context,
+                        matchText: match[0],
+                        position: match.index
+                    });
+                    
+                    if (contexts.length >= 5) break;
+                }
+            } catch (e) {
+                console.error('Error getting contexts:', e);
+            }
+            
+            return contexts;
+        }
+
+        // Display results
+        function displayResults(results) {
+            const resultsEl = document.getElementById('results');
+            const noResultsEl = document.getElementById('noResults');
+            const resultsContainer = document.getElementById('resultsContainer');
+            const resultsCount = document.getElementById('resultsCount');
+            
+            if (results.length === 0) {
+                resultsEl.classList.remove('active');
+                noResultsEl.classList.add('active');
+                return;
+            }
+            
+            noResultsEl.classList.remove('active');
+            resultsEl.classList.add('active');
+            
+            resultsCount.textContent = `${results.length} document${results.length === 1 ? '' : 's'} found`;
+            
+            resultsContainer.innerHTML = results.map((result, index) => {
+                const matchesHtml = result.matches.map((match, mIndex) => {
+                    const highlightedText = match.text.replace(
+                        new RegExp(`(${escapeRegex(match.matchText)})`, 'gi'),
+                        '<mark>$1</mark>'
+                    );
+                    
+                    return `
+                        <div class="match-context">
+                            <div class="match-label">Match ${mIndex + 1}</div>
+                            <div>${highlightedText}</div>
+                        </div>
+                    `;
+                }).join('');
+                
+                return `
+                    <div class="result-item" style="animation-delay: ${index * 0.05}s">
+                        <div class="result-header">
+                            <div class="result-title">${escapeHtml(result.filename)}</div>
+                            <div class="result-badge">Data Set ${result.dataset}</div>
+                        </div>
+                        <div class="result-meta">
+                            <div>📄 ${result.pages} page${result.pages === 1 ? '' : 's'}</div>
+                            <div>🔍 ${result.matches.length} match${result.matches.length === 1 ? '' : 'es'}</div>
+                        </div>
+                        <div class="result-body">
+                            ${matchesHtml}
+                            <button class="pdf-link" onclick="openPdfModal('${escapeHtml(result.filepath).replace(/'/g, "\\'")}', '${escapeHtml(result.filename).replace(/'/g, "\\'")}')">
+                                View PDF
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Helper functions
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function escapeRegex(text) {
+            return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        // PDF Viewer functions
+        function openPdfModal(filepath, filename) {
+            const modal = document.getElementById('pdfModal');
+            const title = document.getElementById('pdfModalTitle');
+            const viewer = document.getElementById('pdfViewer');
+            const body = document.getElementById('pdfModalBody');
+            
+            title.textContent = filename;
+            
+            // Try to load the PDF
+            viewer.src = filepath;
+            
+            // Handle load error
+            viewer.onerror = function() {
+                body.innerHTML = `
+                    <div class="pdf-error">
+                        <div class="pdf-error-icon">⚠️</div>
+                        <div class="no-results-text">Could not load PDF</div>
+                        <div class="no-results-hint">File path: ${escapeHtml(filepath)}</div>
+                        <div style="margin-top: 1rem;">
+                            <a href="${escapeHtml(filepath)}" target="_blank" class="pdf-link">
+                                Open in New Tab
+                            </a>
+                        </div>
+                    </div>
+                `;
+            };
+            
+            modal.classList.add('active');
+            
+            // Close on escape key
+            document.addEventListener('keydown', handleEscapeKey);
+        }
+
+        function closePdfModal() {
+            const modal = document.getElementById('pdfModal');
+            const viewer = document.getElementById('pdfViewer');
+            const body = document.getElementById('pdfModalBody');
+            
+            modal.classList.remove('active');
+            viewer.src = '';
+            body.innerHTML = '<iframe class="pdf-viewer" id="pdfViewer"></iframe>';
+            
+            document.removeEventListener('keydown', handleEscapeKey);
+        }
+
+        function handleEscapeKey(e) {
+            if (e.key === 'Escape') {
+                closePdfModal();
+            }
+        }
+
+        // Close modal when clicking outside
+        document.addEventListener('click', function(e) {
+            const modal = document.getElementById('pdfModal');
+            if (e.target === modal) {
+                closePdfModal();
+            }
+        });
+
+        // Event listeners
+        document.getElementById('searchButton').addEventListener('click', () => {
+            const query = document.getElementById('searchInput').value.trim();
+            if (query) {
+                const results = search(query);
+                displayResults(results);
+            }
+        });
+
+        document.getElementById('searchInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('searchButton').click();
+            }
+        });
+
+        // Load documents on page load
+        loadDocuments();
+    </script>
+</body>
+</html>

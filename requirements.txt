@@ -1,0 +1,11 @@
+# Core dependencies
+pdfplumber>=0.10.0
+watchdog>=3.0.0
+
+# Download tools (optional - only needed for downloading PDFs)
+selenium>=4.0.0
+requests>=2.28.0
+
+# System dependencies (install separately):
+# brew install poppler    # provides pdftotext, pdfinfo
+# brew install chromedriver  # for Selenium downloads
