@@ -757,8 +757,9 @@
             // Search each document
             for (const doc of documents) {
                 const text = doc.text || '';
+                const pageOffsets = doc.page_offsets || null;
                 const matches = [];
-                
+
                 if (operator === 'AND') {
                     // All terms must match
                     let allMatch = true;
@@ -771,20 +772,20 @@
                     if (allMatch) {
                         // Get contexts for all terms
                         for (const term of searchTerms) {
-                            matches.push(...getContexts(text, term, caseSensitive, wholeWord, useRegex));
+                            matches.push(...getContexts(text, term, caseSensitive, wholeWord, useRegex, 200, pageOffsets));
                         }
                     }
                 } else if (operator === 'OR') {
                     // Any term can match
                     for (const term of searchTerms) {
                         if (searchInText(text, term, caseSensitive, wholeWord, useRegex)) {
-                            matches.push(...getContexts(text, term, caseSensitive, wholeWord, useRegex));
+                            matches.push(...getContexts(text, term, caseSensitive, wholeWord, useRegex, 200, pageOffsets));
                         }
                     }
                 } else {
                     // Single term
                     if (searchInText(text, query, caseSensitive, wholeWord, useRegex)) {
-                        matches.push(...getContexts(text, query, caseSensitive, wholeWord, useRegex));
+                        matches.push(...getContexts(text, query, caseSensitive, wholeWord, useRegex, 200, pageOffsets));
                     }
                 }
                 
@@ -824,46 +825,64 @@
             }
         }
 
+        // Helper: convert character position to 1-based page number
+        function positionToPage(position, pageOffsets) {
+            if (!pageOffsets || pageOffsets.length === 0) return null;
+            // Binary search: find rightmost offset <= position
+            let lo = 0, hi = pageOffsets.length;
+            while (lo < hi) {
+                const mid = (lo + hi) >>> 1;
+                if (pageOffsets[mid] <= position) lo = mid + 1;
+                else hi = mid;
+            }
+            return Math.max(1, lo);  // lo is already 1-based index after bisect_right
+        }
+
         // Helper: get contexts
-        function getContexts(text, term, caseSensitive, wholeWord, useRegex, contextSize = 200) {
+        function getContexts(text, term, caseSensitive, wholeWord, useRegex, contextSize = 200, pageOffsets = null) {
             const contexts = [];
-            
+
             try {
                 let pattern = term;
                 let flags = caseSensitive ? 'g' : 'gi';
-                
+
                 if (!useRegex) {
                     pattern = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                 }
-                
+
                 if (wholeWord) {
                     pattern = `\\b${pattern}\\b`;
                 }
-                
+
                 const regex = new RegExp(pattern, flags);
                 let match;
-                
+
                 while ((match = regex.exec(text)) !== null) {
                     const start = Math.max(0, match.index - contextSize);
                     const end = Math.min(text.length, match.index + match[0].length + contextSize);
-                    
+
                     let context = text.substring(start, end);
-                    
+
                     if (start > 0) context = '...' + context;
                     if (end < text.length) context = context + '...';
-                    
-                    contexts.push({
+
+                    const ctx = {
                         text: context,
                         matchText: match[0],
                         position: match.index
-                    });
-                    
+                    };
+
+                    const page = positionToPage(match.index, pageOffsets);
+                    if (page !== null) ctx.page = page;
+
+                    contexts.push(ctx);
+
                     if (contexts.length >= 5) break;
                 }
             } catch (e) {
                 console.error('Error getting contexts:', e);
             }
-            
+
             return contexts;
         }
 
@@ -891,15 +910,20 @@
                         new RegExp(`(${escapeRegex(match.matchText)})`, 'gi'),
                         '<mark>$1</mark>'
                     );
-                    
+                    const pageLabel = match.page ? ` — Page ${match.page}` : '';
+
                     return `
                         <div class="match-context">
-                            <div class="match-label">Match ${mIndex + 1}</div>
+                            <div class="match-label">Match ${mIndex + 1}${pageLabel}</div>
                             <div>${highlightedText}</div>
                         </div>
                     `;
                 }).join('');
-                
+
+                // Use first match's page for the View PDF button
+                const firstPage = (result.matches.length > 0 && result.matches[0].page) ? result.matches[0].page : null;
+                const pdfPageArg = firstPage ? `, ${firstPage}` : '';
+
                 return `
                     <div class="result-item" style="animation-delay: ${index * 0.05}s">
                         <div class="result-header">
@@ -912,7 +936,7 @@
                         </div>
                         <div class="result-body">
                             ${matchesHtml}
-                            <button class="pdf-link" onclick="openPdfModal('${escapeHtml(result.filepath).replace(/'/g, "\\'")}', '${escapeHtml(result.filename).replace(/'/g, "\\'")}')">
+                            <button class="pdf-link" onclick="openPdfModal('${escapeHtml(result.filepath).replace(/'/g, "\\'")}', '${escapeHtml(result.filename).replace(/'/g, "\\'")}'${pdfPageArg})">
                                 View PDF
                             </button>
                         </div>
@@ -933,16 +957,16 @@
         }
 
         // PDF Viewer functions
-        function openPdfModal(filepath, filename) {
+        function openPdfModal(filepath, filename, pageNumber) {
             const modal = document.getElementById('pdfModal');
             const title = document.getElementById('pdfModalTitle');
             const viewer = document.getElementById('pdfViewer');
             const body = document.getElementById('pdfModalBody');
-            
+
             title.textContent = filename;
-            
-            // Try to load the PDF
-            viewer.src = filepath;
+
+            // Load the PDF, optionally jumping to a specific page
+            viewer.src = pageNumber ? filepath + '#page=' + pageNumber : filepath;
             
             // Handle load error
             viewer.onerror = function() {

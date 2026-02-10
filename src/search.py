@@ -4,6 +4,7 @@ Epstein DOJ Files - CLI Search Utility
 Search through the extracted PDF text via command line or interactive mode.
 """
 
+import bisect
 import json
 import re
 import sys
@@ -11,6 +12,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import DATA_DIR, JSON_SEARCH_INDEX, JSON_FULL
+
+
+def _position_to_page(position, page_offsets):
+    """Convert a character position to a 1-based page number."""
+    page_index = bisect.bisect_right(page_offsets, position) - 1
+    return max(1, page_index + 1)
 
 
 class PDFSearcher:
@@ -52,6 +59,7 @@ class PDFSearcher:
 
         for doc in self.data:
             text = doc["text"]
+            page_offsets = doc.get("page_offsets")
             matches = list(regex.finditer(text))
 
             if matches:
@@ -64,11 +72,14 @@ class PDFSearcher:
                         context = "..." + context
                     if end < len(text):
                         context = context + "..."
-                    contexts.append({
+                    ctx = {
                         "position": match.start(),
                         "context": context,
                         "match": match.group(),
-                    })
+                    }
+                    if page_offsets:
+                        ctx["page"] = _position_to_page(match.start(), page_offsets)
+                    contexts.append(ctx)
 
                 results.append({
                     "dataset": doc["dataset"],
@@ -122,7 +133,8 @@ class PDFSearcher:
 
             contexts_to_show = min(max_contexts, len(result["contexts"]))
             for j, ctx in enumerate(result["contexts"][:contexts_to_show], 1):
-                print(f"\n   Match {j}:")
+                page_info = f" (Page {ctx['page']})" if "page" in ctx else ""
+                print(f"\n   Match {j}{page_info}:")
                 print(f"   {ctx['context']}")
 
             if len(result["contexts"]) > max_contexts:

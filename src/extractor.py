@@ -70,9 +70,15 @@ def process_single_pdf(pdf_path):
     except ValueError:
         pages = 0
 
+    # Store path relative to project root with leading / for absolute URL paths
+    try:
+        relative_path = "/" + str(pdf_path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        relative_path = str(pdf_path)
+
     return {
         "filename": pdf_path.name,
-        "filepath": str(pdf_path),
+        "filepath": relative_path,
         "size_bytes": stats.st_size,
         "size_mb": round(stats.st_size / (1024 * 1024), 2),
         "modified_date": datetime.fromtimestamp(stats.st_mtime).isoformat(),
@@ -178,12 +184,23 @@ def create_search_index(data):
     for dataset in data["datasets"]:
         for file_info in dataset["files"]:
             if "full_text" in file_info and "error" not in file_info:
+                full_text = file_info["full_text"]
+
+                # Split on form-feed characters to find page boundaries
+                pages_text = full_text.split('\f')
+                page_offsets = []
+                offset = 0
+                for page_text in pages_text:
+                    page_offsets.append(offset)
+                    offset += len(page_text) + 1  # +1 for the \f character
+
                 search_index.append({
                     "dataset": dataset["dataset_number"],
                     "filename": file_info["filename"],
                     "filepath": file_info["filepath"],
                     "pages": file_info.get("pages", 0),
-                    "text": file_info["full_text"],
+                    "text": full_text,
+                    "page_offsets": page_offsets,
                 })
     return search_index
 

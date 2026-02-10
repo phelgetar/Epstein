@@ -46,12 +46,21 @@ class SecureHandler(http.server.SimpleHTTPRequestHandler):
 
     def end_headers(self):
         origin = self.headers.get("Origin", "")
+        port = self.server.server_address[1]
         allowed_origins = {
-            f"http://127.0.0.1:{self.server.server_address[1]}",
-            f"http://localhost:{self.server.server_address[1]}",
+            f"http://127.0.0.1:{port}",
+            f"http://localhost:{port}",
         }
-        if origin in allowed_origins:
-            self.send_header("Access-Control-Allow-Origin", origin)
+        # Allow LAN origins (private network IPs)
+        if origin:
+            from urllib.parse import urlparse
+            parsed = urlparse(origin)
+            hostname = parsed.hostname or ""
+            if (origin in allowed_origins
+                    or hostname.startswith("192.168.")
+                    or hostname.startswith("10.")
+                    or hostname.startswith("172.")):
+                self.send_header("Access-Control-Allow-Origin", origin)
         # Prevent MIME sniffing
         self.send_header("X-Content-Type-Options", "nosniff")
         # Clickjacking protection
@@ -232,20 +241,32 @@ def main():
         print(f"Error: No available ports in range {PORT_RANGE.start}-{PORT_RANGE.stop - 1}")
         sys.exit(1)
 
-    url = f"http://{SERVER_HOST}:{port}/static/search.html"
+    url = f"http://127.0.0.1:{port}/static/search.html"
+
+    # Get LAN IP for display
+    lan_ip = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        lan_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        pass
 
     print("=" * 70)
-    print("Epstein DOJ Files - Secure Search Interface")
+    print("Epstein DOJ Files - Search Interface")
     print("=" * 70)
     print()
-    print(f"  Bound to:    {SERVER_HOST} (localhost only)")
+    print(f"  Bound to:    {SERVER_HOST} (all interfaces)")
     if port != PREFERRED_PORT:
         print(f"  Port:        {port} (preferred {PREFERRED_PORT} was busy)")
     else:
         print(f"  Port:        {port}")
-    print(f"  URL:         {url}")
+    print(f"  Local:       {url}")
+    if lan_ip:
+        print(f"  Network:     http://{lan_ip}:{port}/static/search.html")
     print()
-    print("  Security:    CORS restricted, CSP enabled, path traversal blocked")
+    print("  Security:    CORS (LAN), CSP enabled, path traversal blocked")
     print()
     print("  Press Ctrl+C to stop the server")
     print("=" * 70)

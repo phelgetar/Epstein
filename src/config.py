@@ -14,7 +14,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 PDF_DIR = PROJECT_ROOT / "epstein_doj_files"
 
 # Server
-SERVER_HOST = "127.0.0.1"  # Localhost only - never bind to 0.0.0.0
+SERVER_HOST = "0.0.0.0"  # Bind to all interfaces for LAN access
 PREFERRED_PORT = 8000
 PORT_RANGE = range(8000, 8100)
 
