@@ -1,77 +1,90 @@
 #!/usr/bin/env python3
 """
-Secure HTTP server for the Epstein DOJ Files search interface.
+FastAPI server for the Epstein DOJ Files search interface.
 
-Security measures:
-- Binds to 127.0.0.1 only (not accessible from network)
-- CORS restricted to localhost origins
-- Content-Security-Policy headers
-- Path traversal protection
-- File extension allowlist
-- Auto-reload on code changes via watchdog
+Features:
+- Server-side search API (/api/search) — browser no longer loads full JSON
+- Security middleware: CORS, CSP, X-Frame-Options, etc.
+- Static file serving for HTML, PDFs, and data files
+- Auto-reload via uvicorn --reload
 """
 
-import http.server
-import socketserver
+import json
 import socket
-import os
 import sys
 import webbrowser
-import mimetypes
-import signal
-import time
-import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
+from urllib.parse import urlparse
 
-# Add project root to path so config can be imported
+from fastapi import FastAPI, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
     PROJECT_ROOT, STATIC_DIR, DATA_DIR, PDF_DIR,
     SERVER_HOST, PREFERRED_PORT, PORT_RANGE,
-    ALLOWED_EXTENSIONS, WATCH_EXTENSIONS, WATCH_DIRS,
+    JSON_SEARCH_INDEX, JSON_FULL,
 )
+from src.search import PDFSearcher, _parse_and_search
 
 
-class SecureHandler(http.server.SimpleHTTPRequestHandler):
-    """HTTP handler with security hardening."""
+# ─── Global State ────────────────────────────────────────────
 
-    # Serve from project root so all subdirectories are accessible
-    directory = str(PROJECT_ROOT)
+searcher: Optional[PDFSearcher] = None
+doc_stats: dict = {"total_docs": 0, "total_pages": 0}
 
-    extensions_map = {
-        **http.server.SimpleHTTPRequestHandler.extensions_map,
-        ".pdf": "application/pdf",
-        ".json": "application/json",
-    }
 
-    def end_headers(self):
-        origin = self.headers.get("Origin", "")
-        port = self.server.server_address[1]
-        allowed_origins = {
-            f"http://127.0.0.1:{port}",
-            f"http://localhost:{port}",
-        }
-        # Allow LAN origins (private network IPs)
-        if origin:
-            from urllib.parse import urlparse
-            parsed = urlparse(origin)
-            hostname = parsed.hostname or ""
-            if (origin in allowed_origins
-                    or hostname.startswith("192.168.")
-                    or hostname.startswith("10.")
-                    or hostname.startswith("172.")):
-                self.send_header("Access-Control-Allow-Origin", origin)
-        # Prevent MIME sniffing
-        self.send_header("X-Content-Type-Options", "nosniff")
-        # Clickjacking protection
-        self.send_header("X-Frame-Options", "SAMEORIGIN")
-        # XSS filter
-        self.send_header("X-XSS-Protection", "1; mode=block")
-        # Referrer policy
-        self.send_header("Referrer-Policy", "no-referrer")
-        # Content Security Policy - restrict to self and Google Fonts
-        self.send_header(
-            "Content-Security-Policy",
+# ─── Lifespan ────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load search index into memory on startup."""
+    global searcher, doc_stats
+
+    # Find search index
+    candidates = [
+        DATA_DIR / JSON_SEARCH_INDEX,
+        DATA_DIR / JSON_FULL,
+        PROJECT_ROOT / JSON_SEARCH_INDEX,
+        PROJECT_ROOT / JSON_FULL,
+    ]
+    json_file = None
+    for candidate in candidates:
+        if candidate.exists():
+            json_file = candidate
+            break
+
+    if json_file:
+        searcher = PDFSearcher(str(json_file))
+        doc_stats["total_docs"] = len(searcher.data)
+        doc_stats["total_pages"] = sum(doc.get("pages", 0) for doc in searcher.data)
+    else:
+        print("\nWarning: No search index found.")
+        print("Run the extractor first: python -m src.extractor\n")
+
+    yield
+
+
+# ─── App ─────────────────────────────────────────────────────
+
+app = FastAPI(title="Epstein DOJ Files", lifespan=lifespan)
+
+
+# ─── Security Middleware ─────────────────────────────────────
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com; "
@@ -79,67 +92,115 @@ class SecureHandler(http.server.SimpleHTTPRequestHandler):
             "img-src 'self' data:; "
             "frame-src 'self';"
         )
-        # Cache control for development
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-        super().end_headers()
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        return response
 
-    def translate_path(self, path):
-        """Override to serve files from project root and prevent path traversal."""
-        # Get the translated path from parent
-        translated = super().translate_path(path)
-        real_path = os.path.realpath(translated)
-        root = os.path.realpath(str(PROJECT_ROOT))
 
-        # Block path traversal - resolved path must be under project root
-        if not real_path.startswith(root + os.sep) and real_path != root:
-            self.send_error(403, "Forbidden")
-            return os.devnull
+app.add_middleware(SecurityHeadersMiddleware)
 
-        return translated
+# CORS — allow localhost and LAN origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.\d+\.\d+\.\d+)(:\d+)?$",
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
-    def do_GET(self):
-        """Handle GET requests with extension allowlisting."""
-        # Redirect root to search page
-        if self.path == "/" or self.path == "":
-            self.send_response(301)
-            self.send_header("Location", "/static/search.html")
-            self.end_headers()
-            return
 
-        # Check file extension against allowlist
-        path = self.path.split("?")[0]  # strip query params
-        ext = os.path.splitext(path)[1].lower()
+# ─── API Routes ──────────────────────────────────────────────
 
-        # Allow directory listings only for specific paths, or files with allowed extensions
-        if ext and ext not in ALLOWED_EXTENSIONS:
-            self.send_error(403, "File type not allowed")
-            return
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/static/search.html")
 
-        super().do_GET()
 
-    def guess_type(self, path):
-        """Ensure files are served with correct MIME types."""
-        mime_type, _ = mimetypes.guess_type(path)
+@app.get("/api/stats")
+async def stats():
+    return doc_stats
 
-        if path.endswith(".pdf"):
-            mime_type = "application/pdf"
-        elif path.endswith(".html"):
-            mime_type = "text/html"
-        elif path.endswith(".json"):
-            mime_type = "application/json"
 
-        if mime_type is None:
-            mime_type = "application/octet-stream"
+@app.get("/api/search")
+async def search_api(
+    q: str = Query(..., min_length=1, description="Search query"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=10000),
+    dataset: Optional[int] = Query(None, ge=1, le=12),
+    min_pages: int = Query(0, ge=0),
+    max_pages: Optional[int] = Query(None, ge=0),
+    sort: str = Query("relevance", pattern="^(relevance|filename|dataset)$"),
+    case_sensitive: bool = Query(False),
+    whole_word: bool = Query(False),
+    use_regex: bool = Query(False),
+):
+    if searcher is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Search index not loaded. Run: python -m src.extractor"},
+        )
 
-        return mime_type
+    # Run the search
+    results = _parse_and_search(searcher, q)
 
-    def log_message(self, format, *args):
-        """Custom log format."""
-        print(f"[{self.log_date_time_string()}] {format % args}")
+    # Apply filters
+    if dataset is not None:
+        results = [r for r in results if r["dataset"] == dataset]
+    results = [r for r in results if r["pages"] >= min_pages]
+    if max_pages is not None:
+        results = [r for r in results if r["pages"] <= max_pages]
 
+    # Sort
+    if sort == "relevance":
+        results.sort(key=lambda r: r["match_count"], reverse=True)
+    elif sort == "filename":
+        results.sort(key=lambda r: r["filename"])
+    elif sort == "dataset":
+        results.sort(key=lambda r: (r["dataset"], r["filename"]))
+
+    # Totals before pagination
+    total = len(results)
+    total_matches = sum(r["match_count"] for r in results)
+
+    # Paginate
+    start = (page - 1) * per_page
+    page_results = results[start:start + per_page]
+
+    # Build response — strip the heavy 'text' field from doc spread
+    response_results = []
+    for r in page_results:
+        response_results.append({
+            "dataset": r["dataset"],
+            "filename": r["filename"],
+            "filepath": r["filepath"],
+            "pages": r["pages"],
+            "match_count": r["match_count"],
+            "contexts": r["contexts"][:50],
+        })
+
+    return {
+        "results": response_results,
+        "total": total,
+        "totalMatches": total_matches,
+        "page": page,
+        "perPage": per_page,
+    }
+
+
+# ─── Static File Mounts ─────────────────────────────────────
+# Order matters — mount after API routes so /api/* takes precedence
+
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+if DATA_DIR.exists():
+    app.mount("/data", StaticFiles(directory=str(DATA_DIR)), name="data")
+
+if PDF_DIR.exists():
+    app.mount("/epstein_doj_files", StaticFiles(directory=str(PDF_DIR)), name="pdfs")
+
+
+# ─── Main ────────────────────────────────────────────────────
 
 def is_port_available(port):
-    """Check if a port is available."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind((SERVER_HOST, port))
@@ -149,93 +210,19 @@ def is_port_available(port):
 
 
 def find_available_port():
-    """Find an available port, starting from the preferred port."""
     if is_port_available(PREFERRED_PORT):
         return PREFERRED_PORT
-
     for port in PORT_RANGE:
         if port == PREFERRED_PORT:
             continue
         if is_port_available(port):
             return port
-
     return None
 
 
-def start_server(port):
-    """Start the HTTP server on the given port."""
-    # Allow socket reuse to avoid "address already in use" on restart
-    socketserver.TCPServer.allow_reuse_address = True
-    httpd = socketserver.TCPServer((SERVER_HOST, port), SecureHandler)
-    return httpd
-
-
-def run_with_autoreload(port):
-    """Run the server with auto-reload when source files change."""
-    try:
-        from watchdog.observers import Observer
-        from watchdog.events import FileSystemEventHandler
-    except ImportError:
-        print("watchdog not installed - auto-reload disabled")
-        print("Install with: pip install watchdog")
-        httpd = start_server(port)
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            httpd.shutdown()
-        return
-
-    class ReloadHandler(FileSystemEventHandler):
-        def __init__(self):
-            self.restart_pending = False
-
-        def on_modified(self, event):
-            if event.is_directory:
-                return
-            ext = os.path.splitext(event.src_path)[1]
-            if ext in WATCH_EXTENSIONS:
-                if not self.restart_pending:
-                    self.restart_pending = True
-                    print(f"\n  File changed: {os.path.basename(event.src_path)}")
-                    print("  Restarting server...")
-                    # Restart the process
-                    os.execv(sys.executable, [sys.executable] + sys.argv)
-
-    observer = Observer()
-    handler = ReloadHandler()
-    for watch_dir in WATCH_DIRS:
-        if os.path.isdir(watch_dir):
-            observer.schedule(handler, watch_dir, recursive=True)
-    observer.start()
-
-    httpd = start_server(port)
-    try:
-        print("  Auto-reload: ENABLED (watching src/ and static/)")
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        observer.stop()
-        observer.join()
-        httpd.shutdown()
-
-
 def main():
-    # Validate that static/search.html exists
-    search_html = STATIC_DIR / "search.html"
-    if not search_html.exists():
-        print(f"Error: {search_html} not found")
-        sys.exit(1)
+    import uvicorn
 
-    # Check for JSON search index (in data/ or project root)
-    json_in_data = DATA_DIR / "epstein_pdfs_search_index.json"
-    json_in_root = PROJECT_ROOT / "epstein_pdfs_search_index.json"
-    if not json_in_data.exists() and not json_in_root.exists():
-        print("\nWarning: epstein_pdfs_search_index.json not found")
-        print("Run the extractor first: python -m src.extractor")
-        print("Continuing anyway - search will not work until the JSON is created.\n")
-
-    # Find available port
     port = find_available_port()
     if port is None:
         print(f"Error: No available ports in range {PORT_RANGE.start}-{PORT_RANGE.stop - 1}")
@@ -243,7 +230,7 @@ def main():
 
     url = f"http://127.0.0.1:{port}/static/search.html"
 
-    # Get LAN IP for display
+    # Get LAN IP
     lan_ip = None
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -254,7 +241,7 @@ def main():
         pass
 
     print("=" * 70)
-    print("Epstein DOJ Files - Search Interface")
+    print("Epstein DOJ Files - FastAPI Search Interface")
     print("=" * 70)
     print()
     print(f"  Bound to:    {SERVER_HOST} (all interfaces)")
@@ -266,7 +253,9 @@ def main():
     if lan_ip:
         print(f"  Network:     http://{lan_ip}:{port}/static/search.html")
     print()
-    print("  Security:    CORS (LAN), CSP enabled, path traversal blocked")
+    print(f"  API docs:    http://127.0.0.1:{port}/docs")
+    print("  Security:    CORS (LAN), CSP enabled")
+    print("  Auto-reload: ENABLED (watching src/ and static/)")
     print()
     print("  Press Ctrl+C to stop the server")
     print("=" * 70)
@@ -275,14 +264,18 @@ def main():
     # Open browser
     try:
         webbrowser.open(url)
-        print("  Browser opened automatically")
-        print()
+        print("  Browser opened automatically\n")
     except Exception:
-        print("  (Could not open browser - please open the URL above manually)")
-        print()
+        print("  (Could not open browser — open the URL above manually)\n")
 
-    run_with_autoreload(port)
-    print("\nServer stopped.")
+    uvicorn.run(
+        "src.server:app",
+        host=SERVER_HOST,
+        port=port,
+        reload=True,
+        reload_dirs=[str(PROJECT_ROOT / "src"), str(PROJECT_ROOT / "static")],
+        log_level="info",
+    )
 
 
 if __name__ == "__main__":

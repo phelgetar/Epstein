@@ -869,7 +869,21 @@
                             <div class="filter-row">
                                 <div class="filter-group">
                                     <label class="filter-label">Dataset</label>
-                                    <div class="dataset-checkboxes" id="datasetFilters"></div>
+                                    <select id="datasetFilter" class="filter-select" onchange="onFilterChange()">
+                                        <option value="">All Datasets</option>
+                                        <option value="1">Data Set 1</option>
+                                        <option value="2">Data Set 2</option>
+                                        <option value="3">Data Set 3</option>
+                                        <option value="4">Data Set 4</option>
+                                        <option value="5">Data Set 5</option>
+                                        <option value="6">Data Set 6</option>
+                                        <option value="7">Data Set 7</option>
+                                        <option value="8">Data Set 8</option>
+                                        <option value="9">Data Set 9</option>
+                                        <option value="10">Data Set 10</option>
+                                        <option value="11">Data Set 11</option>
+                                        <option value="12">Data Set 12</option>
+                                    </select>
                                 </div>
                                 <div class="filter-group">
                                     <label class="filter-label">Page Count</label>
@@ -896,7 +910,7 @@
             <div class="stats" id="stats" style="display: none;">
                 <div class="stat">
                     <span class="stat-number" id="totalDocs">0</span>
-                    <span>Documents Loaded</span>
+                    <span>Documents Indexed</span>
                 </div>
                 <div class="stat">
                     <span class="stat-number" id="totalPages">0</span>
@@ -910,11 +924,7 @@
 
             <div class="loading" id="loading">
                 <div class="spinner"></div>
-                <p>Loading documents...</p>
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progressFill"></div>
-                </div>
-                <p class="progress-text" id="progressText"></p>
+                <p>Connecting to server...</p>
             </div>
 
             <div class="results" id="results">
@@ -961,442 +971,117 @@
     <script>
         // ─── Global State ───────────────────────────────────────────
 
-        let documents = [];
-        let currentResults = [];
-        let displayedResults = [];
-        let lastParsedQuery = null;
-        let paginationState = { currentPage: 1, perPage: 20 };
-        let filterState = {
-            datasets: new Set(),
-            minPages: 0,
-            maxPages: Infinity,
-            sortBy: 'relevance'
-        };
+        let lastQuery = '';
+        let paginationState = { currentPage: 1, perPage: 20, totalPages: 0, totalResults: 0 };
+        let lastApiResponse = null;
 
-        // ─── Load Documents with Progress ───────────────────────────
+        // ─── Load Stats on Startup ──────────────────────────────────
 
-        async function loadDocuments() {
-            const loadingEl = document.getElementById('loading');
-            loadingEl.classList.add('active');
-            const progressFill = document.getElementById('progressFill');
-            const progressText = document.getElementById('progressText');
-
+        async function loadStats() {
             try {
-                let response = await fetch('/data/epstein_pdfs_search_index.json');
-                if (!response.ok) {
-                    response = await fetch('/epstein_pdfs_search_index.json');
-                }
+                const resp = await fetch('/api/stats');
+                const data = await resp.json();
 
-                const contentLength = response.headers.get('Content-Length');
-                const totalBytes = contentLength ? parseInt(contentLength) : null;
+                document.getElementById('totalDocs').textContent = data.total_docs;
+                document.getElementById('totalPages').textContent = data.total_pages.toLocaleString();
+                document.getElementById('stats').style.display = 'flex';
+                document.getElementById('searchTime').closest('.stat').style.display = 'none';
 
-                if (totalBytes && response.body) {
-                    const reader = response.body.getReader();
-                    const chunks = [];
-                    let received = 0;
-
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        chunks.push(value);
-                        received += value.length;
-                        const pct = Math.round((received / totalBytes) * 100);
-                        progressFill.style.width = pct + '%';
-                        progressText.textContent =
-                            `${(received / 1048576).toFixed(1)} / ${(totalBytes / 1048576).toFixed(1)} MB`;
-                    }
-
-                    const allChunks = new Uint8Array(received);
-                    let pos = 0;
-                    for (const chunk of chunks) {
-                        allChunks.set(chunk, pos);
-                        pos += chunk.length;
-                    }
-                    documents = JSON.parse(new TextDecoder().decode(allChunks));
-                } else {
-                    documents = await response.json();
-                }
-
-                loadingEl.classList.remove('active');
-
-                // Show stats
-                const statsEl = document.getElementById('stats');
-                statsEl.style.display = 'flex';
-
-                document.getElementById('totalDocs').textContent = documents.length;
-                const totalPages = documents.reduce((sum, doc) => sum + (doc.pages || 0), 0);
-                document.getElementById('totalPages').textContent = totalPages.toLocaleString();
-
-                initFilters();
-
-                console.log(`Loaded ${documents.length} documents`);
-            } catch (error) {
+                document.getElementById('loading').classList.remove('active');
+            } catch (e) {
+                const loadingEl = document.getElementById('loading');
                 loadingEl.innerHTML = `
-                    <div class="no-results-icon">⚠️</div>
-                    <div class="no-results-text">Error loading documents</div>
-                    <div class="no-results-hint">${error.message}</div>
-                    <div style="margin-top: 1rem; color: var(--ink-light);">
-                        Make sure 'epstein_pdfs_search_index.json' is in the data/ directory.
-                    </div>
+                    <div class="no-results-icon">&#x26A0;&#xFE0F;</div>
+                    <div class="no-results-text">Could not connect to server</div>
+                    <div class="no-results-hint">${escapeHtml(e.message)}</div>
                 `;
+                loadingEl.classList.add('active');
             }
         }
 
-        // ─── Query Parser ───────────────────────────────────────────
+        // ─── Build Search URL Params ────────────────────────────────
 
-        function parseQuery(queryStr) {
-            // Step 1: Extract quoted phrases → placeholders
-            const phrases = [];
-            let working = queryStr.replace(/"([^"]+)"/g, (_, phrase) => {
-                phrases.push(phrase);
-                return `__PH${phrases.length - 1}__`;
-            });
+        function getSearchParams(page, perPage) {
+            const params = new URLSearchParams();
+            params.set('q', document.getElementById('searchInput').value.trim());
+            params.set('page', page);
+            params.set('per_page', perPage);
 
-            function restore(s) {
-                return s.replace(/__PH(\d+)__/g, (_, idx) => phrases[parseInt(idx)]);
-            }
+            const dataset = document.getElementById('datasetFilter').value;
+            if (dataset) params.set('dataset', dataset);
 
-            // Step 2: Extract NEAR/N pairs
-            const proximityPairs = [];
-            working = working.replace(/(\S+)\s+NEAR\/(\d+)\s+(\S+)/gi, (_, t1, n, t2) => {
-                proximityPairs.push({
-                    term1: restore(t1),
-                    term2: restore(t2),
-                    distance: parseInt(n)
-                });
-                return '';
-            });
-            working = working.trim();
+            const minPages = document.getElementById('minPages').value;
+            if (minPages) params.set('min_pages', minPages);
 
-            // Step 3: Extract NOT terms
-            let notTerms = [];
-            if (/ NOT /i.test(working)) {
-                const notParts = working.split(/ NOT /i);
-                working = notParts[0].trim();
-                notTerms = notParts.slice(1).map(t => restore(t.trim())).filter(Boolean);
-            }
+            const maxPages = document.getElementById('maxPages').value;
+            if (maxPages) params.set('max_pages', maxPages);
 
-            // Step 4: Split on AND/OR
-            let searchTerms, operator;
+            params.set('sort', document.getElementById('sortBy').value);
+            params.set('case_sensitive', document.getElementById('caseSensitive').checked);
+            params.set('whole_word', document.getElementById('wholeWord').checked);
+            params.set('use_regex', document.getElementById('regex').checked);
 
-            if (/ AND /i.test(working)) {
-                searchTerms = working.split(/ AND /i).map(t => restore(t.trim())).filter(Boolean);
-                operator = 'AND';
-            } else if (/ OR /i.test(working)) {
-                searchTerms = working.split(/ OR /i).map(t => restore(t.trim())).filter(Boolean);
-                operator = 'OR';
-            } else {
-                const t = restore(working);
-                searchTerms = t ? [t] : [];
-                operator = 'SINGLE';
-            }
-
-            return { searchTerms, operator, notTerms, proximityPairs };
+            return params;
         }
 
-        // ─── Search ─────────────────────────────────────────────────
+        // ─── Execute Search via API ─────────────────────────────────
 
-        function search(query) {
+        async function executeSearch(page) {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) return;
+
+            if (page === undefined) page = 1;
+            lastQuery = query;
+            paginationState.currentPage = page;
+
+            const resultsEl = document.getElementById('results');
+            const noResultsEl = document.getElementById('noResults');
+            const overlay = document.getElementById('searchOverlay');
+
+            resultsEl.classList.add('active');
+            noResultsEl.classList.remove('active');
+            overlay.classList.add('active');
+
             const startTime = performance.now();
 
-            const caseSensitive = document.getElementById('caseSensitive').checked;
-            const wholeWord = document.getElementById('wholeWord').checked;
-            const useRegex = document.getElementById('regex').checked;
-
-            const parsed = parseQuery(query);
-            lastParsedQuery = parsed;
-            const results = [];
-
-            for (const doc of documents) {
-                const text = doc.text || '';
-                const pageOffsets = doc.page_offsets || null;
-                const matches = [];
-
-                if (parsed.searchTerms.length > 0) {
-                    if (parsed.operator === 'AND') {
-                        let allMatch = true;
-                        for (const term of parsed.searchTerms) {
-                            if (!searchInText(text, term, caseSensitive, wholeWord, useRegex)) {
-                                allMatch = false;
-                                break;
-                            }
-                        }
-                        if (allMatch) {
-                            for (const term of parsed.searchTerms) {
-                                matches.push(...getContexts(text, term, caseSensitive, wholeWord, useRegex, 300, pageOffsets));
-                            }
-                        }
-                    } else if (parsed.operator === 'OR') {
-                        for (const term of parsed.searchTerms) {
-                            if (searchInText(text, term, caseSensitive, wholeWord, useRegex)) {
-                                matches.push(...getContexts(text, term, caseSensitive, wholeWord, useRegex, 300, pageOffsets));
-                            }
-                        }
-                    } else {
-                        const term = parsed.searchTerms[0];
-                        if (searchInText(text, term, caseSensitive, wholeWord, useRegex)) {
-                            matches.push(...getContexts(text, term, caseSensitive, wholeWord, useRegex, 300, pageOffsets));
-                        }
-                    }
-                }
-
-                // Proximity pairs
-                for (const pp of parsed.proximityPairs) {
-                    const proxMatches = checkProximity(text, pp.term1, pp.term2, pp.distance, caseSensitive, wholeWord, useRegex);
-                    if (proxMatches.length > 0) {
-                        matches.push(...getProximityContexts(text, proxMatches, 300, pageOffsets));
-                    }
-                }
-
-                if (matches.length > 0) {
-                    results.push({ ...doc, matches: matches.slice(0, 50) });
-                }
-            }
-
-            // Apply NOT exclusions
-            let filtered = results;
-            if (parsed.notTerms.length > 0) {
-                filtered = results.filter(result => {
-                    const text = result.text || '';
-                    return parsed.notTerms.every(notTerm =>
-                        !searchInText(text, notTerm, caseSensitive, wholeWord, useRegex)
-                    );
-                });
-            }
-
-            const endTime = performance.now();
-            document.getElementById('searchTime').textContent = Math.round(endTime - startTime);
-
-            return filtered;
-        }
-
-        // ─── Search Helpers ─────────────────────────────────────────
-
-        function searchInText(text, term, caseSensitive, wholeWord, useRegex) {
             try {
-                let pattern = term;
-                let flags = caseSensitive ? 'g' : 'gi';
+                const params = getSearchParams(page, paginationState.perPage);
+                const resp = await fetch('/api/search?' + params.toString());
+                const data = await resp.json();
 
-                if (!useRegex) {
-                    pattern = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                if (!resp.ok) {
+                    throw new Error(data.error || `Server error (${resp.status})`);
                 }
 
-                if (wholeWord) {
-                    pattern = `\\b${pattern}\\b`;
-                }
+                const elapsed = Math.round(performance.now() - startTime);
+                const searchTimeStat = document.getElementById('searchTime').closest('.stat');
+                searchTimeStat.style.display = 'flex';
+                document.getElementById('searchTime').textContent = elapsed;
 
-                return new RegExp(pattern, flags).test(text);
+                lastApiResponse = data;
+                paginationState.totalResults = data.total;
+                paginationState.totalPages = Math.ceil(data.total / data.perPage);
+
+                displayResults(data);
             } catch (e) {
-                return false;
+                console.error('Search error:', e);
+                resultsEl.classList.remove('active');
+                noResultsEl.classList.add('active');
+                document.querySelector('.no-results-hint').textContent = e.message;
+            } finally {
+                overlay.classList.remove('active');
             }
-        }
-
-        function positionToPage(position, pageOffsets) {
-            if (!pageOffsets || pageOffsets.length === 0) return null;
-            let lo = 0, hi = pageOffsets.length;
-            while (lo < hi) {
-                const mid = (lo + hi) >>> 1;
-                if (pageOffsets[mid] <= position) lo = mid + 1;
-                else hi = mid;
-            }
-            return Math.max(1, lo);
-        }
-
-        function getContexts(text, term, caseSensitive, wholeWord, useRegex, contextSize = 300, pageOffsets = null) {
-            const contexts = [];
-
-            try {
-                let pattern = term;
-                let flags = caseSensitive ? 'g' : 'gi';
-
-                if (!useRegex) {
-                    pattern = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                }
-
-                if (wholeWord) {
-                    pattern = `\\b${pattern}\\b`;
-                }
-
-                const regex = new RegExp(pattern, flags);
-                let match;
-
-                while ((match = regex.exec(text)) !== null) {
-                    const start = Math.max(0, match.index - contextSize);
-                    const end = Math.min(text.length, match.index + match[0].length + contextSize);
-
-                    let context = text.substring(start, end);
-
-                    if (start > 0) context = '...' + context;
-                    if (end < text.length) context = context + '...';
-
-                    const ctx = {
-                        text: context,
-                        matchText: match[0],
-                        position: match.index
-                    };
-
-                    const page = positionToPage(match.index, pageOffsets);
-                    if (page !== null) ctx.page = page;
-
-                    contexts.push(ctx);
-
-                    if (contexts.length >= 50) break;
-                }
-            } catch (e) {
-                console.error('Error getting contexts:', e);
-            }
-
-            return contexts;
-        }
-
-        // ─── Proximity Search ───────────────────────────────────────
-
-        function getAllPositions(text, term, caseSensitive, wholeWord, useRegex) {
-            const positions = [];
-            try {
-                let pattern = term;
-                let flags = caseSensitive ? 'g' : 'gi';
-                if (!useRegex) pattern = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                if (wholeWord) pattern = `\\b${pattern}\\b`;
-                const regex = new RegExp(pattern, flags);
-                let match;
-                while ((match = regex.exec(text)) !== null) {
-                    positions.push({ start: match.index, end: match.index + match[0].length, text: match[0] });
-                    if (positions.length > 1000) break;
-                }
-            } catch (e) {}
-            return positions;
-        }
-
-        function checkProximity(text, term1, term2, maxDistance, caseSensitive, wholeWord, useRegex) {
-            const positions1 = getAllPositions(text, term1, caseSensitive, wholeWord, useRegex);
-            const positions2 = getAllPositions(text, term2, caseSensitive, wholeWord, useRegex);
-
-            if (positions1.length === 0 || positions2.length === 0) return [];
-
-            const matches = [];
-            for (const p1 of positions1) {
-                for (const p2 of positions2) {
-                    const start = Math.min(p1.end, p2.end);
-                    const end = Math.max(p1.start, p2.start);
-                    if (start >= end) continue;
-                    const between = text.substring(start, end).trim().split(/\s+/).filter(Boolean);
-                    if (between.length <= maxDistance) {
-                        matches.push({
-                            start: Math.min(p1.start, p2.start),
-                            end: Math.max(p1.end, p2.end),
-                            term1Match: p1.text,
-                            term2Match: p2.text,
-                            distance: between.length
-                        });
-                    }
-                }
-                if (matches.length >= 50) break;
-            }
-
-            return matches;
-        }
-
-        function getProximityContexts(text, proximityMatches, contextSize, pageOffsets) {
-            return proximityMatches.slice(0, 50).map(pm => {
-                const start = Math.max(0, pm.start - contextSize);
-                const end = Math.min(text.length, pm.end + contextSize);
-                let context = text.substring(start, end);
-                if (start > 0) context = '...' + context;
-                if (end < text.length) context = context + '...';
-
-                const ctx = {
-                    text: context,
-                    matchText: pm.term1Match,
-                    proximityTerms: [pm.term1Match, pm.term2Match],
-                    position: pm.start
-                };
-                const page = positionToPage(pm.start, pageOffsets);
-                if (page !== null) ctx.page = page;
-                return ctx;
-            });
-        }
-
-        // ─── Filtering & Sorting ────────────────────────────────────
-
-        function toggleFilterPanel() {
-            const body = document.getElementById('filterBody');
-            const toggle = document.getElementById('filterToggle');
-            const visible = body.style.display !== 'none';
-            body.style.display = visible ? 'none' : 'block';
-            toggle.textContent = visible ? '+' : '\u2212';
-        }
-
-        function initFilters() {
-            const container = document.getElementById('datasetFilters');
-            const datasetNums = new Set(documents.map(d => d.dataset));
-            let html = '';
-            for (let i = 1; i <= 12; i++) {
-                if (datasetNums.has(i)) {
-                    html += `<label><input type="checkbox" value="${i}" onchange="updateFilters()"> ${i}</label>`;
-                }
-            }
-            container.innerHTML = html;
-
-            document.getElementById('minPages').addEventListener('change', updateFilters);
-            document.getElementById('maxPages').addEventListener('change', updateFilters);
-            document.getElementById('sortBy').addEventListener('change', updateFilters);
-        }
-
-        function updateFilters() {
-            const checked = document.querySelectorAll('#datasetFilters input:checked');
-            filterState.datasets = new Set(Array.from(checked).map(cb => parseInt(cb.value)));
-
-            const minVal = document.getElementById('minPages').value;
-            const maxVal = document.getElementById('maxPages').value;
-            filterState.minPages = minVal ? parseInt(minVal) : 0;
-            filterState.maxPages = maxVal ? parseInt(maxVal) : Infinity;
-
-            filterState.sortBy = document.getElementById('sortBy').value;
-
-            if (currentResults.length > 0) {
-                displayedResults = applyFiltersAndSort(currentResults);
-                paginationState.currentPage = 1;
-                displayResults(displayedResults);
-            }
-        }
-
-        function applyFiltersAndSort(results) {
-            let filtered = results;
-
-            if (filterState.datasets.size > 0) {
-                filtered = filtered.filter(r => filterState.datasets.has(r.dataset));
-            }
-
-            filtered = filtered.filter(r =>
-                r.pages >= filterState.minPages && r.pages <= filterState.maxPages
-            );
-
-            filtered = [...filtered];
-            switch (filterState.sortBy) {
-                case 'relevance':
-                    filtered.sort((a, b) => b.matches.length - a.matches.length);
-                    break;
-                case 'filename':
-                    filtered.sort((a, b) => a.filename.localeCompare(b.filename));
-                    break;
-                case 'dataset':
-                    filtered.sort((a, b) => a.dataset - b.dataset || a.filename.localeCompare(b.filename));
-                    break;
-            }
-
-            return filtered;
         }
 
         // ─── Display Results ────────────────────────────────────────
 
-        function displayResults(results) {
+        function displayResults(data) {
             const resultsEl = document.getElementById('results');
             const noResultsEl = document.getElementById('noResults');
             const resultsContainer = document.getElementById('resultsContainer');
             const resultsCount = document.getElementById('resultsCount');
 
-            if (results.length === 0) {
+            if (data.total === 0) {
                 resultsEl.classList.remove('active');
                 noResultsEl.classList.add('active');
                 document.getElementById('pagination').innerHTML = '';
@@ -1406,40 +1091,34 @@
             noResultsEl.classList.remove('active');
             resultsEl.classList.add('active');
 
-            const totalMatches = results.reduce((sum, r) => sum + r.matches.length, 0);
             resultsCount.textContent =
-                `${results.length} document${results.length === 1 ? '' : 's'} found` +
-                ` (${totalMatches.toLocaleString()} total match${totalMatches === 1 ? '' : 'es'})`;
+                `${data.total} document${data.total === 1 ? '' : 's'} found` +
+                ` (${data.totalMatches.toLocaleString()} total match${data.totalMatches === 1 ? '' : 'es'})`;
 
-            // Paginate
-            const { currentPage, perPage } = paginationState;
-            const totalPages = Math.ceil(results.length / perPage);
-            const start = (currentPage - 1) * perPage;
-            const pageResults = results.slice(start, start + perPage);
-
-            resultsContainer.innerHTML = pageResults.map((result, index) => {
-                return renderResultItem(result, start + index);
+            resultsContainer.innerHTML = data.results.map((result, index) => {
+                return renderResultItem(result, index);
             }).join('');
 
-            renderPagination(results.length, totalPages, currentPage);
+            renderPagination(data.total, paginationState.totalPages, data.page);
         }
 
-        function renderResultItem(result, globalIndex) {
-            const allHighlightTerms = getHighlightTerms();
+        function renderResultItem(result, index) {
+            const highlightTerms = getHighlightTerms(lastQuery);
 
-            const matchesHtml = result.matches.map((match, mIndex) => {
-                let highlightedText = escapeHtml(match.text);
+            const matchesHtml = result.contexts.map((ctx, mIndex) => {
+                let highlightedText = escapeHtml(ctx.context);
 
-                // Highlight all search terms
-                for (const term of allHighlightTerms) {
-                    const escaped = escapeRegex(term);
-                    highlightedText = highlightedText.replace(
-                        new RegExp(`(${escaped})`, 'gi'),
-                        '<mark>$1</mark>'
-                    );
+                for (const term of highlightTerms) {
+                    try {
+                        const escaped = escapeRegex(term);
+                        highlightedText = highlightedText.replace(
+                            new RegExp(`(${escaped})`, 'gi'),
+                            '<mark>$1</mark>'
+                        );
+                    } catch (e) {}
                 }
 
-                const pageLabel = match.page ? ` — Page ${match.page}` : '';
+                const pageLabel = ctx.page ? ` \u2014 Page ${ctx.page}` : '';
                 const collapsedClass = mIndex >= 3 ? ' collapsed' : '';
 
                 return `
@@ -1450,23 +1129,23 @@
                 `;
             }).join('');
 
-            const extraCount = result.matches.length - 3;
+            const extraCount = result.contexts.length - 3;
             const toggleAllHtml = extraCount > 0
                 ? `<button class="match-toggle-all" onclick="toggleAllMatches(this)">Show ${extraCount} more match${extraCount === 1 ? '' : 'es'}</button>`
                 : '';
 
-            const firstPage = (result.matches.length > 0 && result.matches[0].page) ? result.matches[0].page : null;
+            const firstPage = (result.contexts.length > 0 && result.contexts[0].page) ? result.contexts[0].page : null;
             const pdfPageArg = firstPage ? `, ${firstPage}` : '';
 
             return `
-                <div class="result-item" style="animation-delay: ${(globalIndex % 20) * 0.03}s">
+                <div class="result-item" style="animation-delay: ${(index % 20) * 0.03}s">
                     <div class="result-header">
                         <div class="result-title">${escapeHtml(result.filename)}</div>
                         <div class="result-badge">Data Set ${result.dataset}</div>
                     </div>
                     <div class="result-meta">
-                        <div>📄 ${result.pages} page${result.pages === 1 ? '' : 's'}</div>
-                        <div>🔍 ${result.matches.length} match${result.matches.length === 1 ? '' : 'es'}</div>
+                        <div>\uD83D\uDCC4 ${result.pages} page${result.pages === 1 ? '' : 's'}</div>
+                        <div>\uD83D\uDD0D ${result.match_count} match${result.match_count === 1 ? '' : 'es'}</div>
                     </div>
                     <div class="result-body">
                         ${matchesHtml}
@@ -1479,13 +1158,62 @@
             `;
         }
 
-        function getHighlightTerms() {
-            if (!lastParsedQuery) return [];
-            const terms = [...lastParsedQuery.searchTerms];
-            for (const pp of lastParsedQuery.proximityPairs) {
-                terms.push(pp.term1, pp.term2);
+        // ─── Highlight Term Extraction ──────────────────────────────
+
+        function getHighlightTerms(query) {
+            if (!query) return [];
+            const terms = [];
+
+            // Extract quoted phrases
+            const phrases = [];
+            let working = query.replace(/"([^"]+)"/g, (_, phrase) => {
+                phrases.push(phrase);
+                return `__PH${phrases.length - 1}__`;
+            });
+
+            function restore(s) {
+                return s.replace(/__PH(\d+)__/g, (_, idx) => phrases[parseInt(idx)]);
             }
+
+            // Extract NEAR/N terms
+            working = working.replace(/(\S+)\s+NEAR\/\d+\s+(\S+)/gi, (_, t1, t2) => {
+                terms.push(restore(t1), restore(t2));
+                return '';
+            });
+
+            // Remove NOT terms
+            if (/ NOT /i.test(working)) {
+                working = working.split(/ NOT /i)[0];
+            }
+
+            // Split on AND/OR
+            working = working.trim();
+            if (/ AND /i.test(working)) {
+                terms.push(...working.split(/ AND /i).map(t => restore(t.trim())).filter(Boolean));
+            } else if (/ OR /i.test(working)) {
+                terms.push(...working.split(/ OR /i).map(t => restore(t.trim())).filter(Boolean));
+            } else {
+                const t = restore(working).trim();
+                if (t) terms.push(t);
+            }
+
             return terms.filter(Boolean);
+        }
+
+        // ─── Filter & Sort ──────────────────────────────────────────
+
+        function toggleFilterPanel() {
+            const body = document.getElementById('filterBody');
+            const toggle = document.getElementById('filterToggle');
+            const visible = body.style.display !== 'none';
+            body.style.display = visible ? 'none' : 'block';
+            toggle.textContent = visible ? '+' : '\u2212';
+        }
+
+        function onFilterChange() {
+            if (lastQuery) {
+                executeSearch(1);
+            }
         }
 
         // ─── Expand/Collapse Matches ────────────────────────────────
@@ -1541,38 +1269,47 @@
         }
 
         function goToPage(page) {
-            const totalPages = Math.ceil(displayedResults.length / paginationState.perPage);
-            if (page < 1 || page > totalPages) return;
-            paginationState.currentPage = page;
-            displayResults(displayedResults);
+            if (page < 1 || page > paginationState.totalPages) return;
+            executeSearch(page);
             document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
         }
 
         // ─── Export ─────────────────────────────────────────────────
 
-        function exportResults(format) {
-            if (!displayedResults || displayedResults.length === 0) return;
+        async function exportResults(format) {
+            if (!lastQuery) return;
 
-            if (format === 'csv') {
-                const header = 'Filename,Dataset,Pages,Matches\n';
-                const rows = displayedResults.map(r =>
-                    `"${r.filename}",${r.dataset},${r.pages},${r.matches.length}`
-                ).join('\n');
-                downloadFile(header + rows, 'search-results.csv', 'text/csv');
-            } else if (format === 'json') {
-                const data = displayedResults.map(r => ({
-                    filename: r.filename,
-                    dataset: r.dataset,
-                    pages: r.pages,
-                    filepath: r.filepath,
-                    matchCount: r.matches.length,
-                    matches: r.matches.map(m => ({
-                        text: m.matchText,
-                        page: m.page || null,
-                        position: m.position
-                    }))
-                }));
-                downloadFile(JSON.stringify(data, null, 2), 'search-results.json', 'application/json');
+            // Fetch all results (up to 10000) for export
+            const params = getSearchParams(1, 10000);
+            try {
+                const resp = await fetch('/api/search?' + params.toString());
+                const data = await resp.json();
+
+                if (!resp.ok || data.results.length === 0) return;
+
+                if (format === 'csv') {
+                    const header = 'Filename,Dataset,Pages,Matches\n';
+                    const rows = data.results.map(r =>
+                        `"${r.filename}",${r.dataset},${r.pages},${r.match_count}`
+                    ).join('\n');
+                    downloadFile(header + rows, 'search-results.csv', 'text/csv');
+                } else if (format === 'json') {
+                    const exported = data.results.map(r => ({
+                        filename: r.filename,
+                        dataset: r.dataset,
+                        pages: r.pages,
+                        filepath: r.filepath,
+                        matchCount: r.match_count,
+                        contexts: r.contexts.map(c => ({
+                            match: c.match,
+                            page: c.page || null,
+                            position: c.position
+                        }))
+                    }));
+                    downloadFile(JSON.stringify(exported, null, 2), 'search-results.json', 'application/json');
+                }
+            } catch (e) {
+                console.error('Export error:', e);
             }
         }
 
@@ -1609,13 +1346,12 @@
             const body = document.getElementById('pdfModalBody');
 
             title.textContent = filename;
-
             viewer.src = pageNumber ? filepath + '#page=' + pageNumber : filepath;
 
             viewer.onerror = function() {
                 body.innerHTML = `
                     <div class="pdf-error">
-                        <div class="pdf-error-icon">⚠️</div>
+                        <div class="pdf-error-icon">&#x26A0;&#xFE0F;</div>
                         <div class="no-results-text">Could not load PDF</div>
                         <div class="no-results-hint">File path: ${escapeHtml(filepath)}</div>
                         <div style="margin-top: 1rem;">
@@ -1644,42 +1380,18 @@
         }
 
         function handleEscapeKey(e) {
-            if (e.key === 'Escape') {
-                closePdfModal();
-            }
+            if (e.key === 'Escape') closePdfModal();
         }
 
-        // Close modal when clicking outside
         document.addEventListener('click', function(e) {
-            const modal = document.getElementById('pdfModal');
-            if (e.target === modal) {
-                closePdfModal();
-            }
+            if (e.target === document.getElementById('pdfModal')) closePdfModal();
         });
 
         // ─── Event Listeners ────────────────────────────────────────
 
         let searchDebounceTimer = null;
 
-        function executeSearch() {
-            const query = document.getElementById('searchInput').value.trim();
-            if (!query) return;
-
-            const overlay = document.getElementById('searchOverlay');
-            overlay.classList.add('active');
-
-            requestAnimationFrame(() => {
-                setTimeout(() => {
-                    currentResults = search(query);
-                    displayedResults = applyFiltersAndSort(currentResults);
-                    paginationState.currentPage = 1;
-                    displayResults(displayedResults);
-                    overlay.classList.remove('active');
-                }, 0);
-            });
-        }
-
-        document.getElementById('searchButton').addEventListener('click', executeSearch);
+        document.getElementById('searchButton').addEventListener('click', () => executeSearch());
 
         document.getElementById('searchInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') executeSearch();
@@ -1689,12 +1401,17 @@
             clearTimeout(searchDebounceTimer);
             const val = document.getElementById('searchInput').value.trim();
             if (val.length >= 3) {
-                searchDebounceTimer = setTimeout(executeSearch, 400);
+                searchDebounceTimer = setTimeout(() => executeSearch(), 400);
             }
         });
 
-        // Load documents on page load
-        loadDocuments();
+        document.getElementById('minPages').addEventListener('change', onFilterChange);
+        document.getElementById('maxPages').addEventListener('change', onFilterChange);
+        document.getElementById('sortBy').addEventListener('change', onFilterChange);
+
+        // ─── Init ───────────────────────────────────────────────────
+
+        loadStats();
     </script>
 </body>
 </html>
