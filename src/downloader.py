@@ -3,8 +3,11 @@
 Epstein DOJ Files Downloader with Pagination Support.
 
 Downloads public PDF documents from justice.gov/epstein/doj-disclosures.
-Uses Playwright (headless browser) to handle Akamai bot detection and
-age verification, then downloads PDFs via requests.
+Uses Playwright in headed mode with stealth patches to bypass Akamai CDN
+bot detection, then downloads PDFs via requests.
+
+Headed mode is required — Akamai blocks headless browsers from accessing
+paginated pages (returns 403 Access Denied on ?page=N).
 
 Usage:
     python -m src.downloader                     # Download all datasets
@@ -12,6 +15,7 @@ Usage:
     python -m src.downloader --dataset 1 3 5     # Download specific datasets
     python -m src.downloader --workers 10        # Use 10 concurrent threads
     python -m src.downloader --dry-run           # Count files without downloading
+    python -m src.downloader --headless          # Headless mode (page 0 only)
 """
 
 import argparse
@@ -25,6 +29,7 @@ from urllib.parse import urljoin
 
 import requests
 from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
+from playwright_stealth import Stealth
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
@@ -162,6 +167,7 @@ def download_dataset(dataset_num, workers, dry_run, browser_context):
 
     base_url = f"{SOURCE_URL}/data-set-{dataset_num}-files"
     page = browser_context.new_page()
+    Stealth().apply_stealth_sync(page)
 
     try:
         # Navigate to dataset page
@@ -202,9 +208,9 @@ def download_dataset(dataset_num, workers, dry_run, browser_context):
                     print(f"  Page {page_num}: FAILED")
                     continue
 
-            # Handle barriers on subsequent pages if they reappear
-            handle_barriers(page)
-
+            # Extract links BEFORE handling barriers — the PDF links are
+            # already in the DOM, and clicking the age verification "Yes"
+            # triggers a Drupal AJAX reload that clears the content.
             links = extract_pdf_links_from_browser(page, page_url)
             all_pdf_links.extend(links)
 
@@ -283,7 +289,7 @@ def main():
                "  python -m src.downloader --dataset 1 3 5   # Specific datasets\n"
                "  python -m src.downloader --workers 10      # 10 threads\n"
                "  python -m src.downloader --dry-run         # Count only\n"
-               "  python -m src.downloader --headed          # Show browser\n",
+               "  python -m src.downloader --headless        # Headless (page 0 only)\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -299,8 +305,8 @@ def main():
         help="Count files and pages without downloading",
     )
     parser.add_argument(
-        "--headed", action="store_true",
-        help="Show the browser window (default: headless)",
+        "--headless", action="store_true",
+        help="Run browser in headless mode (Akamai blocks pagination in headless)",
     )
     args = parser.parse_args()
 
@@ -317,7 +323,7 @@ def main():
     print(f"  Datasets:  {', '.join(str(d) for d in datasets)}")
     print(f"  Workers:   {args.workers}")
     print(f"  Output:    {PDF_DIR.resolve()}")
-    print(f"  Browser:   {'headed' if args.headed else 'headless'}")
+    print(f"  Browser:   {'headless' if args.headless else 'headed'}")
     if args.dry_run:
         print("  Mode:      DRY RUN (no downloads)")
     print()
@@ -326,13 +332,9 @@ def main():
         PDF_DIR.mkdir(exist_ok=True)
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=not args.headed)
+        browser = pw.chromium.launch(headless=args.headless)
         context = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/131.0.0.0 Safari/537.36"
-            ),
+            viewport={"width": 1920, "height": 1080},
         )
 
         grand_total = 0
