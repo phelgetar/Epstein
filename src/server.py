@@ -18,11 +18,17 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
+import sentry_sdk
 from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+
+sentry_sdk.init(
+    dsn="https://67ab20992c89e92e3d6f97f6d42e947b@o4510865601069056.ingest.us.sentry.io/4510865617911808",
+    send_default_pii=True,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (

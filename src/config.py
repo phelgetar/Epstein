@@ -31,6 +31,10 @@ JSON_FILE_LIST = "epstein_pdfs_file_list.json"
 # Allowed file extensions the server may serve
 ALLOWED_EXTENSIONS = {".html", ".json", ".pdf", ".css", ".js", ".png", ".jpg", ".ico"}
 
+# Download settings
+DOWNLOAD_WORKERS = 5       # Concurrent PDF download threads
+PAGE_FETCH_DELAY = 2.0     # Seconds between page requests (Akamai rate limiting)
+
 # Auto-reload settings
 WATCH_EXTENSIONS = {".py", ".html", ".css", ".js"}
 WATCH_DIRS = [
