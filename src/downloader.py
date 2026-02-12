@@ -3,7 +3,8 @@
 Epstein DOJ Files Downloader with Pagination Support.
 
 Downloads public PDF documents from justice.gov/epstein/doj-disclosures.
-Handles paginated file listings across all 12 datasets.
+Uses Playwright (headless browser) to handle Akamai bot detection and
+age verification, then downloads PDFs via requests.
 
 Usage:
     python -m src.downloader                     # Download all datasets
@@ -23,7 +24,7 @@ from pathlib import Path
 from urllib.parse import urljoin
 
 import requests
-from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
@@ -32,48 +33,82 @@ from src.config import (
 )
 
 
-# ─── HTML Parsing ────────────────────────────────────────────
+# ─── Browser Page Fetching ───────────────────────────────────
 
-def get_last_page(html):
-    """Parse the 'Last page' link to find total pages (0-indexed).
+def handle_barriers(page):
+    """Handle robot verification and age verification prompts."""
+    # Robot verification — "I am not a robot" button
+    try:
+        robot_btn = page.get_by_role("button", name="I am not a robot")
+        if robot_btn.is_visible(timeout=3000):
+            print("  Clicking 'I am not a robot'...")
+            robot_btn.click()
+            page.wait_for_load_state("networkidle", timeout=10000)
+            time.sleep(2)
+    except (PwTimeout, Exception):
+        pass
 
-    Returns 0 if there's no pagination (single page).
-    """
-    soup = BeautifulSoup(html, "html.parser")
+    # Age verification — "Yes" button for 18+ check
+    try:
+        age_heading = page.locator("text=Are you 18 years of age or older?")
+        if age_heading.is_visible(timeout=2000):
+            yes_btn = page.get_by_role("button", name="Yes")
+            if yes_btn.is_visible(timeout=2000):
+                print("  Clicking age verification 'Yes'...")
+                yes_btn.click()
+                time.sleep(1)
+    except (PwTimeout, Exception):
+        pass
 
-    # Look for "Last" pagination link: <a href="?page=N" ...>Last</a>
-    last_link = soup.find("a", string=re.compile(r"Last", re.IGNORECASE))
-    if last_link and last_link.get("href"):
-        match = re.search(r"[?&]page=(\d+)", last_link["href"])
-        if match:
-            return int(match.group(1))
 
-    # Fallback: find the highest page number in pagination links
+def get_last_page_from_browser(page):
+    """Extract the last page number from pagination in the browser DOM."""
+    # Look for "Last" link first
+    last_link = page.locator("a:has-text('Last')")
+    try:
+        if last_link.count() > 0:
+            href = last_link.first.get_attribute("href")
+            if href:
+                match = re.search(r"[?&]page=(\d+)", href)
+                if match:
+                    return int(match.group(1))
+    except Exception:
+        pass
+
+    # Fallback: find highest page number in pagination links
     max_page = 0
-    for link in soup.find_all("a", href=re.compile(r"[?&]page=\d+")):
-        match = re.search(r"[?&]page=(\d+)", link["href"])
-        if match:
-            max_page = max(max_page, int(match.group(1)))
+    pagination_links = page.locator("nav[aria-label='Pagination'] a[href*='page=']")
+    try:
+        count = pagination_links.count()
+        for i in range(count):
+            href = pagination_links.nth(i).get_attribute("href")
+            if href:
+                match = re.search(r"[?&]page=(\d+)", href)
+                if match:
+                    max_page = max(max_page, int(match.group(1)))
+    except Exception:
+        pass
 
     return max_page
 
 
-def extract_pdf_links(html, base_url):
-    """Extract all PDF download URLs from page HTML."""
-    soup = BeautifulSoup(html, "html.parser")
+def extract_pdf_links_from_browser(page, base_url):
+    """Extract all PDF download URLs from the current browser page."""
     links = set()
-
-    for a_tag in soup.find_all("a", href=True):
-        href = a_tag["href"]
-        if ".pdf" in href.lower():
-            # Resolve relative URLs
-            full_url = urljoin(base_url, href)
-            links.add(full_url)
-
+    all_anchors = page.locator("a[href*='.pdf']")
+    try:
+        count = all_anchors.count()
+        for i in range(count):
+            href = all_anchors.nth(i).get_attribute("href")
+            if href:
+                full_url = urljoin(base_url, href)
+                links.add(full_url)
+    except Exception:
+        pass
     return sorted(links)
 
 
-# ─── Download Functions ──────────────────────────────────────
+# ─── PDF Download ────────────────────────────────────────────
 
 def is_valid_pdf(filepath):
     """Check if a file exists and starts with the PDF magic bytes."""
@@ -98,7 +133,6 @@ def download_pdf(url, output_path, session):
         if response.status_code != 200:
             return url, False, f"  HTTP {response.status_code}: {filename}"
 
-        # Verify content is actually a PDF
         if not response.content[:5].startswith(b"%PDF-"):
             return url, False, f"  Not a PDF: {filename}"
 
@@ -114,47 +148,9 @@ def download_pdf(url, output_path, session):
         return url, False, f"  Error: {filename} — {e}"
 
 
-REQUEST_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/131.0.0.0 Safari/537.36"
-    ),
-}
-
-
-def fetch_page(session, url):
-    """Fetch a page with retry logic.
-
-    Uses a fresh request (not session) for listing pages to avoid
-    Akamai CDN blocking sequential same-connection requests.
-    """
-    for attempt in range(5):
-        try:
-            resp = requests.get(url, headers=REQUEST_HEADERS, timeout=30)
-            if resp.status_code == 200:
-                return resp.text
-            if resp.status_code in (403, 429):
-                # Exponential backoff: 10s, 20s, 40s, 80s, 160s
-                wait = 10 * (2 ** attempt)
-                print(f"  HTTP {resp.status_code}, backing off {wait}s "
-                      f"(attempt {attempt + 1}/5)...")
-                time.sleep(wait)
-                continue
-            print(f"  HTTP {resp.status_code} for {url}")
-            return None
-        except Exception as e:
-            if attempt < 4:
-                time.sleep(5)
-            else:
-                print(f"  Failed to fetch {url}: {e}")
-                return None
-    return None
-
-
 # ─── Dataset Download ────────────────────────────────────────
 
-def download_dataset(dataset_num, workers, dry_run=False):
+def download_dataset(dataset_num, workers, dry_run, browser_context):
     """Download all PDFs for one dataset across all paginated pages."""
     print(f"\n{'=' * 70}")
     print(f"  Data Set {dataset_num}")
@@ -164,89 +160,116 @@ def download_dataset(dataset_num, workers, dry_run=False):
     if not dry_run:
         dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    session = requests.Session()
-    session.headers.update(REQUEST_HEADERS)
-
     base_url = f"{SOURCE_URL}/data-set-{dataset_num}-files"
+    page = browser_context.new_page()
 
-    # Fetch first page to discover pagination
-    print(f"  Fetching: {base_url}")
-    html = fetch_page(session, base_url)
-    if html is None:
-        print("  Failed to load dataset page")
-        return 0
+    try:
+        # Navigate to dataset page
+        print(f"  Navigating to: {base_url}")
+        page.goto(base_url, wait_until="networkidle", timeout=30000)
+        time.sleep(2)
 
-    last_page = get_last_page(html)
-    total_pages = last_page + 1
-    print(f"  Pages: {total_pages} (page 0 to {last_page})")
+        # Handle verification barriers
+        handle_barriers(page)
 
-    # Collect all PDF links across all pages
-    all_pdf_links = []
-    pdf_links_page0 = extract_pdf_links(html, base_url)
-    all_pdf_links.extend(pdf_links_page0)
-    print(f"  Page 0: {len(pdf_links_page0)} PDF links")
+        # Discover pagination
+        last_page = get_last_page_from_browser(page)
+        total_pages = last_page + 1
+        print(f"  Pages: {total_pages} (page 0 to {last_page})")
 
-    for page_num in range(1, total_pages):
-        time.sleep(PAGE_FETCH_DELAY)
-        page_url = f"{base_url}?page={page_num}"
-        page_html = fetch_page(session, page_url)
-        if page_html is None:
-            print(f"  Page {page_num}: FAILED")
-            continue
-        links = extract_pdf_links(page_html, page_url)
+        # Collect PDF links from all pages
+        all_pdf_links = []
+
+        # Page 0 (current page)
+        links = extract_pdf_links_from_browser(page, base_url)
         all_pdf_links.extend(links)
+        print(f"  Page 0: {len(links)} PDF links")
 
-        # Progress every 10 pages or on last page
-        if page_num % 10 == 0 or page_num == last_page:
-            print(f"  Page {page_num}/{last_page}: {len(links)} links "
-                  f"(total so far: {len(all_pdf_links)})")
+        # Remaining pages
+        for page_num in range(1, total_pages):
+            time.sleep(PAGE_FETCH_DELAY)
+            page_url = f"{base_url}?page={page_num}"
 
-    # Deduplicate
-    all_pdf_links = sorted(set(all_pdf_links))
-    print(f"\n  Total unique PDF links: {len(all_pdf_links)}")
+            try:
+                page.goto(page_url, wait_until="networkidle", timeout=30000)
+                time.sleep(1)
+            except PwTimeout:
+                print(f"  Page {page_num}: timeout, retrying...")
+                try:
+                    page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
+                    time.sleep(2)
+                except Exception:
+                    print(f"  Page {page_num}: FAILED")
+                    continue
 
-    if dry_run:
-        # Count how many already exist
-        existing = sum(
-            1 for url in all_pdf_links
-            if is_valid_pdf(dataset_dir / os.path.basename(url.split("?")[0]))
-        )
-        print(f"  Already downloaded: {existing}")
-        print(f"  Remaining: {len(all_pdf_links) - existing}")
-        return len(all_pdf_links)
+            # Handle barriers on subsequent pages if they reappear
+            handle_barriers(page)
 
-    # Download PDFs with thread pool
-    downloaded = 0
-    skipped = 0
-    failed = 0
+            links = extract_pdf_links_from_browser(page, page_url)
+            all_pdf_links.extend(links)
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {}
-        for url in all_pdf_links:
-            filename = os.path.basename(url.split("?")[0])
-            output_path = dataset_dir / filename
-            future = pool.submit(download_pdf, url, output_path, session)
-            futures[future] = url
+            if page_num % 10 == 0 or page_num == last_page:
+                print(f"  Page {page_num}/{last_page}: {len(links)} links "
+                      f"(total so far: {len(all_pdf_links)})")
 
-        for future in as_completed(futures):
-            url, success, message = future.result()
-            if success:
-                if "Skipped" in message:
-                    skipped += 1
+        # Deduplicate
+        all_pdf_links = sorted(set(all_pdf_links))
+        print(f"\n  Total unique PDF links: {len(all_pdf_links)}")
+
+        if dry_run:
+            existing = sum(
+                1 for url in all_pdf_links
+                if is_valid_pdf(dataset_dir / os.path.basename(url.split("?")[0]))
+            )
+            print(f"  Already downloaded: {existing}")
+            print(f"  Remaining: {len(all_pdf_links) - existing}")
+            return len(all_pdf_links)
+
+        # Transfer browser cookies to requests session for downloads
+        session = requests.Session()
+        cookies = browser_context.cookies()
+        for cookie in cookies:
+            session.cookies.set(cookie["name"], cookie["value"],
+                                domain=cookie.get("domain", ""))
+        session.headers.update({
+            "User-Agent": page.evaluate("() => navigator.userAgent"),
+        })
+
+        # Download PDFs with thread pool
+        downloaded = 0
+        skipped = 0
+        failed = 0
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {}
+            for url in all_pdf_links:
+                filename = os.path.basename(url.split("?")[0])
+                output_path = dataset_dir / filename
+                future = pool.submit(download_pdf, url, output_path, session)
+                futures[future] = url
+
+            for future in as_completed(futures):
+                url, success, message = future.result()
+                if success:
+                    if "Skipped" in message:
+                        skipped += 1
+                    else:
+                        downloaded += 1
+                        print(message)
                 else:
-                    downloaded += 1
+                    failed += 1
                     print(message)
-            else:
-                failed += 1
-                print(message)
 
-    print(f"\n  Data Set {dataset_num} complete:")
-    print(f"    Downloaded: {downloaded}")
-    print(f"    Skipped:    {skipped}")
-    print(f"    Failed:     {failed}")
-    print(f"    Total:      {downloaded + skipped + failed}")
+        print(f"\n  Data Set {dataset_num} complete:")
+        print(f"    Downloaded: {downloaded}")
+        print(f"    Skipped:    {skipped}")
+        print(f"    Failed:     {failed}")
+        print(f"    Total:      {downloaded + skipped + failed}")
 
-    return downloaded + skipped
+        return downloaded + skipped
+
+    finally:
+        page.close()
 
 
 # ─── Main ────────────────────────────────────────────────────
@@ -259,7 +282,8 @@ def main():
                "  python -m src.downloader --dataset 1       # Dataset 1 only\n"
                "  python -m src.downloader --dataset 1 3 5   # Specific datasets\n"
                "  python -m src.downloader --workers 10      # 10 threads\n"
-               "  python -m src.downloader --dry-run         # Count only\n",
+               "  python -m src.downloader --dry-run         # Count only\n"
+               "  python -m src.downloader --headed          # Show browser\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -274,11 +298,14 @@ def main():
         "--dry-run", action="store_true",
         help="Count files and pages without downloading",
     )
+    parser.add_argument(
+        "--headed", action="store_true",
+        help="Show the browser window (default: headless)",
+    )
     args = parser.parse_args()
 
     datasets = args.dataset or list(range(1, NUM_DATASETS + 1))
 
-    # Validate dataset numbers
     for d in datasets:
         if d < 1 or d > NUM_DATASETS:
             print(f"Error: Dataset {d} is out of range (1-{NUM_DATASETS})")
@@ -290,6 +317,7 @@ def main():
     print(f"  Datasets:  {', '.join(str(d) for d in datasets)}")
     print(f"  Workers:   {args.workers}")
     print(f"  Output:    {PDF_DIR.resolve()}")
+    print(f"  Browser:   {'headed' if args.headed else 'headless'}")
     if args.dry_run:
         print("  Mode:      DRY RUN (no downloads)")
     print()
@@ -297,11 +325,27 @@ def main():
     if not args.dry_run:
         PDF_DIR.mkdir(exist_ok=True)
 
-    grand_total = 0
-    for dataset_num in datasets:
-        count = download_dataset(dataset_num, args.workers, args.dry_run)
-        grand_total += count
-        time.sleep(1)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=not args.headed)
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+        )
+
+        grand_total = 0
+        try:
+            for dataset_num in datasets:
+                count = download_dataset(
+                    dataset_num, args.workers, args.dry_run, context,
+                )
+                grand_total += count
+                time.sleep(1)
+        finally:
+            context.close()
+            browser.close()
 
     print(f"\n{'=' * 70}")
     if args.dry_run:
