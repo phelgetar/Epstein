@@ -32,7 +32,8 @@ JSON_FILE_LIST = "epstein_pdfs_file_list.json"
 ALLOWED_EXTENSIONS = {".html", ".json", ".pdf", ".css", ".js", ".png", ".jpg", ".ico"}
 
 # Download settings
-DOWNLOAD_WORKERS = 5       # Concurrent PDF download threads
+DOWNLOAD_WORKERS = 10      # Concurrent PDF download threads
+DOWNLOAD_BATCH_SIZE = 10   # Pages to scan before downloading (memory management)
 PAGE_FETCH_DELAY = 2.0     # Seconds between page requests (Akamai rate limiting)
 
 # Auto-reload settings

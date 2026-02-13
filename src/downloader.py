@@ -4,16 +4,21 @@ Epstein DOJ Files Downloader with Pagination Support.
 
 Downloads public PDF documents from justice.gov/epstein/doj-disclosures.
 Uses Playwright in headed mode with stealth patches to bypass Akamai CDN
-bot detection, then downloads PDFs via requests.
+bot detection, then downloads PDFs via requests with multithreading.
 
 Headed mode is required — Akamai blocks headless browsers from accessing
 paginated pages (returns 403 Access Denied on ?page=N).
+
+Pages are processed in batches (default 10): scan a batch of pages for
+PDF links, download them with a thread pool, free memory, then continue.
+This keeps memory usage low even for datasets with thousands of pages.
 
 Usage:
     python -m src.downloader                     # Download all datasets
     python -m src.downloader --dataset 1         # Download dataset 1 only
     python -m src.downloader --dataset 1 3 5     # Download specific datasets
     python -m src.downloader --workers 10        # Use 10 concurrent threads
+    python -m src.downloader --batch-size 20     # Scan 20 pages per batch
     python -m src.downloader --dry-run           # Count files without downloading
     python -m src.downloader --headless          # Headless mode (page 0 only)
 """
@@ -34,7 +39,7 @@ from playwright_stealth import Stealth
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
     PDF_DIR, SOURCE_URL, NUM_DATASETS,
-    DOWNLOAD_WORKERS, PAGE_FETCH_DELAY,
+    DOWNLOAD_WORKERS, DOWNLOAD_BATCH_SIZE, PAGE_FETCH_DELAY,
 )
 
 
@@ -110,7 +115,31 @@ def extract_pdf_links_from_browser(page, base_url):
                 links.add(full_url)
     except Exception:
         pass
-    return sorted(links)
+    return links
+
+
+def fetch_page_links(page, base_url, page_num):
+    """Navigate to a paginated page and extract PDF links.
+
+    Returns a set of PDF URLs found on the page.
+    """
+    page_url = f"{base_url}?page={page_num}" if page_num > 0 else base_url
+
+    try:
+        page.goto(page_url, wait_until="networkidle", timeout=30000)
+        time.sleep(1)
+    except PwTimeout:
+        try:
+            page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
+            time.sleep(2)
+        except Exception:
+            print(f"    Page {page_num}: FAILED")
+            return set()
+
+    # Extract links before any barrier clicks — PDF links are already
+    # in the DOM, and clicking age verification triggers a Drupal AJAX
+    # reload that clears the content.
+    return extract_pdf_links_from_browser(page, page_url)
 
 
 # ─── PDF Download ────────────────────────────────────────────
@@ -131,7 +160,7 @@ def download_pdf(url, output_path, session):
     filename = output_path.name
 
     if is_valid_pdf(output_path):
-        return url, True, f"  Skipped (exists): {filename}"
+        return url, True, "skip"
 
     try:
         response = session.get(url, timeout=60)
@@ -153,10 +182,42 @@ def download_pdf(url, output_path, session):
         return url, False, f"  Error: {filename} — {e}"
 
 
+def download_batch(pdf_links, dataset_dir, session, workers):
+    """Download a batch of PDFs using a thread pool.
+
+    Returns (downloaded, skipped, failed) counts.
+    """
+    downloaded = 0
+    skipped = 0
+    failed = 0
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {}
+        for url in pdf_links:
+            filename = os.path.basename(url.split("?")[0])
+            output_path = dataset_dir / filename
+            future = pool.submit(download_pdf, url, output_path, session)
+            futures[future] = url
+
+        for future in as_completed(futures):
+            url, success, message = future.result()
+            if success:
+                if message == "skip":
+                    skipped += 1
+                else:
+                    downloaded += 1
+                    print(message)
+            else:
+                failed += 1
+                print(message)
+
+    return downloaded, skipped, failed
+
+
 # ─── Dataset Download ────────────────────────────────────────
 
-def download_dataset(dataset_num, workers, dry_run, browser_context):
-    """Download all PDFs for one dataset across all paginated pages."""
+def download_dataset(dataset_num, workers, batch_size, dry_run, browser_context):
+    """Download all PDFs for one dataset, processing pages in batches."""
     print(f"\n{'=' * 70}")
     print(f"  Data Set {dataset_num}")
     print(f"{'=' * 70}")
@@ -170,12 +231,10 @@ def download_dataset(dataset_num, workers, dry_run, browser_context):
     Stealth().apply_stealth_sync(page)
 
     try:
-        # Navigate to dataset page
+        # Navigate to first page and handle barriers
         print(f"  Navigating to: {base_url}")
         page.goto(base_url, wait_until="networkidle", timeout=30000)
         time.sleep(2)
-
-        # Handle verification barriers
         handle_barriers(page)
 
         # Discover pagination
@@ -183,96 +242,78 @@ def download_dataset(dataset_num, workers, dry_run, browser_context):
         total_pages = last_page + 1
         print(f"  Pages: {total_pages} (page 0 to {last_page})")
 
-        # Collect PDF links from all pages
-        all_pdf_links = []
+        # Set up requests session for downloads (reused across batches)
+        session = None
+        if not dry_run:
+            session = requests.Session()
+            cookies = browser_context.cookies()
+            for cookie in cookies:
+                session.cookies.set(cookie["name"], cookie["value"],
+                                    domain=cookie.get("domain", ""))
+            session.headers.update({
+                "User-Agent": page.evaluate("() => navigator.userAgent"),
+            })
 
-        # Page 0 (current page)
-        links = extract_pdf_links_from_browser(page, base_url)
-        all_pdf_links.extend(links)
-        print(f"  Page 0: {len(links)} PDF links")
+        # Process pages in batches
+        total_downloaded = 0
+        total_skipped = 0
+        total_failed = 0
+        total_links = 0
 
-        # Remaining pages
-        for page_num in range(1, total_pages):
-            time.sleep(PAGE_FETCH_DELAY)
-            page_url = f"{base_url}?page={page_num}"
+        for batch_start in range(0, total_pages, batch_size):
+            batch_end = min(batch_start + batch_size, total_pages)
+            batch_label = f"pages {batch_start}-{batch_end - 1}"
+            print(f"\n  ── Batch: {batch_label} ──")
 
-            try:
-                page.goto(page_url, wait_until="networkidle", timeout=30000)
-                time.sleep(1)
-            except PwTimeout:
-                print(f"  Page {page_num}: timeout, retrying...")
-                try:
-                    page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
-                    time.sleep(2)
-                except Exception:
-                    print(f"  Page {page_num}: FAILED")
-                    continue
+            # Scan this batch of pages for PDF links
+            batch_links = set()
+            for page_num in range(batch_start, batch_end):
+                if page_num > 0:
+                    time.sleep(PAGE_FETCH_DELAY)
 
-            # Extract links BEFORE handling barriers — the PDF links are
-            # already in the DOM, and clicking the age verification "Yes"
-            # triggers a Drupal AJAX reload that clears the content.
-            links = extract_pdf_links_from_browser(page, page_url)
-            all_pdf_links.extend(links)
+                links = fetch_page_links(page, base_url, page_num)
+                batch_links.update(links)
 
-            if page_num % 10 == 0 or page_num == last_page:
-                print(f"  Page {page_num}/{last_page}: {len(links)} links "
-                      f"(total so far: {len(all_pdf_links)})")
+                if page_num % 10 == 0 or page_num == batch_end - 1:
+                    print(f"    Scanned page {page_num}/{last_page}: "
+                          f"{len(links)} links (batch total: {len(batch_links)})")
 
-        # Deduplicate
-        all_pdf_links = sorted(set(all_pdf_links))
-        print(f"\n  Total unique PDF links: {len(all_pdf_links)}")
+            batch_links = sorted(batch_links)
+            total_links += len(batch_links)
 
-        if dry_run:
-            existing = sum(
-                1 for url in all_pdf_links
-                if is_valid_pdf(dataset_dir / os.path.basename(url.split("?")[0]))
-            )
-            print(f"  Already downloaded: {existing}")
-            print(f"  Remaining: {len(all_pdf_links) - existing}")
-            return len(all_pdf_links)
+            if dry_run:
+                existing = sum(
+                    1 for url in batch_links
+                    if is_valid_pdf(dataset_dir / os.path.basename(url.split("?")[0]))
+                )
+                print(f"    Batch links: {len(batch_links)} "
+                      f"(already downloaded: {existing})")
+            else:
+                # Download this batch with thread pool
+                print(f"    Downloading {len(batch_links)} PDFs "
+                      f"with {workers} threads...")
+                dl, sk, fl = download_batch(
+                    batch_links, dataset_dir, session, workers,
+                )
+                total_downloaded += dl
+                total_skipped += sk
+                total_failed += fl
+                print(f"    Batch done: {dl} downloaded, {sk} skipped, {fl} failed")
 
-        # Transfer browser cookies to requests session for downloads
-        session = requests.Session()
-        cookies = browser_context.cookies()
-        for cookie in cookies:
-            session.cookies.set(cookie["name"], cookie["value"],
-                                domain=cookie.get("domain", ""))
-        session.headers.update({
-            "User-Agent": page.evaluate("() => navigator.userAgent"),
-        })
+            # Clear batch from memory
+            del batch_links
 
-        # Download PDFs with thread pool
-        downloaded = 0
-        skipped = 0
-        failed = 0
-
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {}
-            for url in all_pdf_links:
-                filename = os.path.basename(url.split("?")[0])
-                output_path = dataset_dir / filename
-                future = pool.submit(download_pdf, url, output_path, session)
-                futures[future] = url
-
-            for future in as_completed(futures):
-                url, success, message = future.result()
-                if success:
-                    if "Skipped" in message:
-                        skipped += 1
-                    else:
-                        downloaded += 1
-                        print(message)
-                else:
-                    failed += 1
-                    print(message)
-
+        # Summary
         print(f"\n  Data Set {dataset_num} complete:")
-        print(f"    Downloaded: {downloaded}")
-        print(f"    Skipped:    {skipped}")
-        print(f"    Failed:     {failed}")
-        print(f"    Total:      {downloaded + skipped + failed}")
+        print(f"    Total PDF links: {total_links}")
+        if dry_run:
+            print(f"    (dry run — no downloads)")
+        else:
+            print(f"    Downloaded:      {total_downloaded}")
+            print(f"    Skipped:         {total_skipped}")
+            print(f"    Failed:          {total_failed}")
 
-        return downloaded + skipped
+        return total_links if dry_run else total_downloaded + total_skipped
 
     finally:
         page.close()
@@ -288,6 +329,7 @@ def main():
                "  python -m src.downloader --dataset 1       # Dataset 1 only\n"
                "  python -m src.downloader --dataset 1 3 5   # Specific datasets\n"
                "  python -m src.downloader --workers 10      # 10 threads\n"
+               "  python -m src.downloader --batch-size 20   # 20 pages per batch\n"
                "  python -m src.downloader --dry-run         # Count only\n"
                "  python -m src.downloader --headless        # Headless (page 0 only)\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -299,6 +341,10 @@ def main():
     parser.add_argument(
         "--workers", type=int, default=DOWNLOAD_WORKERS,
         help=f"Concurrent download threads (default: {DOWNLOAD_WORKERS})",
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=DOWNLOAD_BATCH_SIZE,
+        help=f"Pages to scan per download batch (default: {DOWNLOAD_BATCH_SIZE})",
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -320,12 +366,13 @@ def main():
     print("=" * 70)
     print("Epstein DOJ Files Downloader")
     print("=" * 70)
-    print(f"  Datasets:  {', '.join(str(d) for d in datasets)}")
-    print(f"  Workers:   {args.workers}")
-    print(f"  Output:    {PDF_DIR.resolve()}")
-    print(f"  Browser:   {'headless' if args.headless else 'headed'}")
+    print(f"  Datasets:   {', '.join(str(d) for d in datasets)}")
+    print(f"  Workers:    {args.workers}")
+    print(f"  Batch size: {args.batch_size} pages")
+    print(f"  Output:     {PDF_DIR.resolve()}")
+    print(f"  Browser:    {'headless' if args.headless else 'headed'}")
     if args.dry_run:
-        print("  Mode:      DRY RUN (no downloads)")
+        print("  Mode:       DRY RUN (no downloads)")
     print()
 
     if not args.dry_run:
@@ -341,7 +388,8 @@ def main():
         try:
             for dataset_num in datasets:
                 count = download_dataset(
-                    dataset_num, args.workers, args.dry_run, context,
+                    dataset_num, args.workers, args.batch_size,
+                    args.dry_run, context,
                 )
                 grand_total += count
                 time.sleep(1)
