@@ -36,6 +36,12 @@ DOWNLOAD_WORKERS = 10      # Concurrent PDF download threads
 DOWNLOAD_BATCH_SIZE = 10   # Pages to scan before downloading (memory management)
 PAGE_FETCH_DELAY = 2.0     # Seconds between page requests (Akamai rate limiting)
 
+# Thumbnail settings
+THUMB_DIR = DATA_DIR / "thumbnails"
+THUMB_WIDTH = 1000          # px wide (height auto-scaled)
+THUMB_QUALITY = 85          # JPEG quality (1-100)
+THUMB_WORKERS = 4           # Concurrent generation threads
+
 # Auto-reload settings
 WATCH_EXTENSIONS = {".py", ".html", ".css", ".js"}
 WATCH_DIRS = [

@@ -32,7 +32,7 @@ sentry_sdk.init(
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
-    PROJECT_ROOT, STATIC_DIR, DATA_DIR, PDF_DIR,
+    PROJECT_ROOT, STATIC_DIR, DATA_DIR, PDF_DIR, THUMB_DIR,
     SERVER_HOST, PREFERRED_PORT, PORT_RANGE,
     JSON_SEARCH_INDEX, JSON_FULL,
 )
@@ -86,19 +86,31 @@ app = FastAPI(title="Epstein DOJ Files", lifespan=lifespan)
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
+        path = request.url.path.lower()
+
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-            "font-src 'self' https://fonts.gstatic.com; "
-            "script-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; "
-            "frame-src 'self';"
-        )
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+
+        if path.endswith(".pdf") and response.status_code == 200:
+            # PDFs need caching for iOS Safari to render them fully
+            # (Safari uses range requests and caches chunks locally)
+            response.headers["Cache-Control"] = "public, max-age=86400"
+        elif path.endswith((".jpg", ".jpeg", ".png")) and response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=604800"
+        else:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                "font-src 'self' https://fonts.gstatic.com; "
+                "script-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; "
+                "frame-src 'self'; "
+                "object-src 'self';"
+            )
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+
         return response
 
 
@@ -191,6 +203,36 @@ async def search_api(
     }
 
 
+_gallery_cache: dict = {}  # dataset -> sorted list of filenames
+
+@app.get("/api/gallery")
+async def gallery_api(
+    dataset: int = Query(..., ge=1, le=12),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(100, ge=1, le=10000),
+):
+    """List thumbnail images for a dataset, paginated."""
+    thumb_dir = THUMB_DIR / f"data-set-{dataset}"
+    if not thumb_dir.exists():
+        return {"images": [], "total": 0, "page": page, "perPage": per_page}
+
+    # Cache the sorted file listing per dataset
+    if dataset not in _gallery_cache:
+        _gallery_cache[dataset] = sorted(f.name for f in thumb_dir.glob("*.jpg"))
+
+    all_images = _gallery_cache[dataset]
+    total = len(all_images)
+    start = (page - 1) * per_page
+    page_images = all_images[start:start + per_page]
+
+    return {
+        "images": [f"/thumbnails/data-set-{dataset}/{name}" for name in page_images],
+        "total": total,
+        "page": page,
+        "perPage": per_page,
+    }
+
+
 # ─── Static File Mounts ─────────────────────────────────────
 # Order matters — mount after API routes so /api/* takes precedence
 
@@ -202,6 +244,9 @@ if DATA_DIR.exists():
 
 if PDF_DIR.exists():
     app.mount("/epstein_doj_files", StaticFiles(directory=str(PDF_DIR)), name="pdfs")
+
+THUMB_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/thumbnails", StaticFiles(directory=str(THUMB_DIR)), name="thumbnails")
 
 
 # ─── Main ────────────────────────────────────────────────────

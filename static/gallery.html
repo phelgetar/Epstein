@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Epstein DOJ Files — Gallery</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --paper: #FAF8F3;
+            --ink-dark: #1A1512;
+            --ink-medium: #463E3A;
+            --ink-light: #8A817C;
+            --accent: #C1440E;
+            --accent-muted: #D4774E;
+            --border: #E0D9CF;
+            --highlight: #FFF4E6;
+            --shadow: rgba(26, 21, 18, 0.08);
+            --columns: 6;
+        }
+
+        body {
+            font-family: 'Crimson Pro', Georgia, serif;
+            background: var(--paper);
+            color: var(--ink-dark);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image:
+                repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(26, 21, 18, 0.01) 2px, rgba(26, 21, 18, 0.01) 4px);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        /* Header */
+        header {
+            border-bottom: 3px solid var(--ink-dark);
+            padding: 3rem 0 2rem;
+            margin-bottom: 2rem;
+            position: relative;
+        }
+
+        header::after {
+            content: '';
+            position: absolute;
+            bottom: -6px;
+            left: 0;
+            width: 100%;
+            height: 1px;
+            background: var(--accent);
+        }
+
+        .header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        h1 {
+            font-size: 4rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            line-height: 1;
+            margin-bottom: 0.5rem;
+            color: var(--ink-dark);
+        }
+
+        .subtitle {
+            font-size: 1.25rem;
+            color: var(--ink-medium);
+            font-weight: 400;
+            letter-spacing: 0.02em;
+        }
+
+        .nav-link {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: var(--accent);
+            text-decoration: none;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.5rem 1rem;
+            border: 2px solid var(--accent);
+            transition: all 0.2s ease;
+        }
+
+        .nav-link:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+        /* Controls */
+        .controls {
+            background: white;
+            border: 2px solid var(--ink-dark);
+            box-shadow: 8px 8px 0 var(--shadow);
+            margin-bottom: 2rem;
+            position: relative;
+        }
+
+        .controls::before {
+            content: '';
+            position: absolute;
+            top: -6px;
+            left: 20px;
+            right: 20px;
+            height: 2px;
+            background: var(--accent);
+        }
+
+        .controls-header {
+            background: var(--ink-dark);
+            color: var(--paper);
+            padding: 1rem 2rem;
+            border-bottom: 2px solid var(--ink-dark);
+        }
+
+        .controls-header h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+
+        .controls-body {
+            padding: 1.5rem 2rem;
+            display: flex;
+            align-items: center;
+            gap: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .control-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--ink-light);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            white-space: nowrap;
+        }
+
+        .control-select {
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            background: var(--paper);
+            color: var(--ink-dark);
+        }
+
+        .column-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 160px;
+            height: 6px;
+            background: var(--border);
+            outline: none;
+            border-radius: 3px;
+        }
+
+        .column-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: var(--accent);
+            cursor: pointer;
+            border-radius: 2px;
+        }
+
+        .column-slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: var(--accent);
+            cursor: pointer;
+            border-radius: 2px;
+            border: none;
+        }
+
+        .column-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: var(--accent);
+            font-weight: 600;
+            min-width: 6ch;
+        }
+
+        .image-count {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: var(--ink-medium);
+            margin-left: auto;
+        }
+
+        /* Gallery Grid */
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(var(--columns), 1fr);
+            gap: 8px;
+            margin-bottom: 2rem;
+        }
+
+        .gallery-item {
+            cursor: pointer;
+            overflow: hidden;
+            border: 2px solid var(--border);
+            background: white;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .gallery-item:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+            box-shadow: 4px 4px 0 var(--shadow);
+        }
+
+        .gallery-item img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .gallery-item .img-label {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(26, 21, 18, 0.8);
+            color: var(--paper);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.6rem;
+            padding: 2px 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .gallery-item:hover .img-label {
+            opacity: 1;
+        }
+
+        /* Pagination */
+        .pagination-info {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .load-more-btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            font-weight: 500;
+            padding: 0.75rem 2rem;
+            background: var(--accent);
+            color: white;
+            border: none;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            transition: all 0.2s ease;
+        }
+
+        .load-more-btn:hover {
+            background: var(--ink-dark);
+        }
+
+        .load-more-btn:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+
+        .page-indicator {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: var(--ink-medium);
+        }
+
+        /* Loading */
+        .loading-msg {
+            text-align: center;
+            padding: 4rem;
+            font-size: 1.25rem;
+            color: var(--ink-medium);
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 1rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .empty-msg {
+            text-align: center;
+            padding: 4rem;
+            color: var(--ink-light);
+            font-size: 1.25rem;
+            display: none;
+        }
+
+        /* Lightbox */
+        .lightbox {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(26, 21, 18, 0.97);
+            z-index: 1000;
+            animation: fadeIn 0.2s ease;
+        }
+
+        .lightbox.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .lightbox-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2rem;
+            color: var(--paper);
+            flex-shrink: 0;
+        }
+
+        .lightbox-nav-btn {
+            background: none;
+            border: 2px solid rgba(250, 248, 243, 0.3);
+            color: var(--paper);
+            font-size: 1.5rem;
+            width: 44px;
+            height: 44px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            border-radius: 2px;
+        }
+
+        .lightbox-nav-btn:hover {
+            border-color: var(--accent);
+            background: var(--accent);
+        }
+
+        .lightbox-nav-btn:disabled {
+            opacity: 0.2;
+            cursor: default;
+        }
+
+        .lightbox-info {
+            text-align: center;
+            flex: 1;
+        }
+
+        .lightbox-counter {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: var(--ink-light);
+        }
+
+        .lightbox-close {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 0.5rem 1.5rem;
+            font-family: 'Crimson Pro', Georgia, serif;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            transition: all 0.2s ease;
+        }
+
+        .lightbox-close:hover {
+            background: var(--ink-dark);
+        }
+
+        .lightbox-body {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            min-height: 0;
+        }
+
+        .lightbox-arrow {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(26, 21, 18, 0.6);
+            color: var(--paper);
+            border: none;
+            font-size: 2.5rem;
+            width: 60px;
+            height: 80px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            transition: all 0.2s ease;
+        }
+
+        .lightbox-arrow:hover {
+            background: var(--accent);
+        }
+
+        .lightbox-arrow.left { left: 0; }
+        .lightbox-arrow.right { right: 0; }
+
+        .lightbox-img {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            max-width: calc(100% - 140px);
+            max-height: 100%;
+            object-fit: contain;
+            border: 2px solid rgba(250, 248, 243, 0.1);
+        }
+
+        .lightbox-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: var(--ink-light);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+        }
+
+        .lightbox-loading .spinner {
+            margin: 0 auto 1rem;
+        }
+
+        .lightbox-error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: var(--accent-muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+        }
+
+        .lightbox-error a {
+            color: var(--accent);
+            cursor: pointer;
+            text-decoration: underline;
+        }
+
+        .lightbox-footer {
+            padding: 0.75rem 2rem;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .lightbox-meta {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--ink-light);
+        }
+
+        .lightbox-meta span {
+            margin: 0 0.75rem;
+        }
+
+        /* Footer */
+        footer {
+            margin-top: 4rem;
+            padding: 2rem 0;
+            border-top: 2px solid var(--border);
+            text-align: center;
+            color: var(--ink-light);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            h1 { font-size: 2.5rem; }
+
+            .controls-body {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .image-count { margin-left: 0; }
+
+            .lightbox-arrow {
+                width: 40px;
+                height: 60px;
+                font-size: 1.5rem;
+            }
+
+            .lightbox-img {
+                max-width: calc(100% - 100px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-row">
+                <div>
+                    <h1>Epstein DOJ Files</h1>
+                    <p class="subtitle">Document Gallery</p>
+                </div>
+                <a href="/static/search.html" class="nav-link">Search</a>
+            </div>
+        </header>
+
+        <main>
+            <div class="controls">
+                <div class="controls-header">
+                    <h2>Gallery Controls</h2>
+                </div>
+                <div class="controls-body">
+                    <div class="control-group">
+                        <label class="control-label">Dataset</label>
+                        <select id="datasetSelect" class="control-select">
+                            <option value="1">Data Set 1</option>
+                            <option value="2">Data Set 2</option>
+                            <option value="3">Data Set 3</option>
+                            <option value="4">Data Set 4</option>
+                            <option value="5">Data Set 5</option>
+                            <option value="6">Data Set 6</option>
+                            <option value="7">Data Set 7</option>
+                            <option value="8">Data Set 8</option>
+                            <option value="9">Data Set 9</option>
+                            <option value="10">Data Set 10</option>
+                            <option value="11">Data Set 11</option>
+                            <option value="12">Data Set 12</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label class="control-label">Columns</label>
+                        <input type="range" id="columnSlider" class="column-slider" min="3" max="10" value="6">
+                        <span class="column-value" id="columnValue">6 cols</span>
+                    </div>
+
+                    <div class="control-group">
+                        <label class="control-label">Rows</label>
+                        <select id="rowsSelect" class="control-select">
+                            <option value="10" selected>10 rows</option>
+                            <option value="50">50 rows</option>
+                            <option value="100">100 rows</option>
+                            <option value="200">200 rows</option>
+                            <option value="all">All rows</option>
+                        </select>
+                    </div>
+
+                    <div class="image-count" id="imageCount"></div>
+                </div>
+            </div>
+
+            <div class="loading-msg" id="loading">
+                <div class="spinner"></div>
+                <p>Loading thumbnails...</p>
+            </div>
+
+            <div class="empty-msg" id="emptyMsg">
+                No thumbnails found for this dataset. Run: <code>python -m src.thumbnails --dataset N</code>
+            </div>
+
+            <div class="gallery-grid" id="galleryGrid"></div>
+
+            <div class="pagination-info" id="paginationInfo" style="display:none;">
+                <button class="load-more-btn" id="prevPageBtn" onclick="prevPage()" style="display:none;">Previous</button>
+                <span class="page-indicator" id="pageIndicator"></span>
+                <button class="load-more-btn" id="nextPageBtn" onclick="nextPage()" style="display:none;">Next</button>
+            </div>
+        </main>
+
+        <!-- Lightbox -->
+        <div class="lightbox" id="lightbox">
+            <div class="lightbox-header">
+                <button class="lightbox-nav-btn" onclick="lightboxPrev()" id="lbPrevTop" title="Previous">&#8592;</button>
+                <div class="lightbox-info">
+                    <div class="lightbox-counter" id="lbCounter"></div>
+                </div>
+                <button class="lightbox-close" onclick="closeLightbox()">Close</button>
+                <button class="lightbox-nav-btn" onclick="lightboxNext()" id="lbNextTop" title="Next" style="margin-left:0.5rem;">&#8594;</button>
+            </div>
+            <div class="lightbox-body" id="lightboxBody">
+                <button class="lightbox-arrow left" onclick="lightboxPrev()" id="lbPrevArrow">&#8592;</button>
+                <div class="lightbox-loading" id="lbLoading"><div class="spinner"></div><div>Loading image...</div></div>
+                <div class="lightbox-error" id="lbError" style="display:none;"><div>Failed to load image</div><a onclick="retryLightbox()">Retry</a></div>
+                <img class="lightbox-img" id="lbImage" src="" alt="">
+                <button class="lightbox-arrow right" onclick="lightboxNext()" id="lbNextArrow">&#8594;</button>
+            </div>
+            <div class="lightbox-footer">
+                <div class="lightbox-meta" id="lbMeta"></div>
+            </div>
+        </div>
+
+        <footer>
+            <p>Epstein DOJ Files Gallery — Data from justice.gov/epstein/doj-disclosures</p>
+        </footer>
+    </div>
+
+    <script>
+        // ─── State ──────────────────────────────────────────────────
+
+        let allImages = [];       // all image paths for current dataset
+        let totalImages = 0;
+        let currentDataset = 1;
+        let viewPage = 1;         // current "page" of rows being viewed
+        let lightboxIndex = -1;
+        const cacheBust = '?v=' + Date.now();  // bust stale cached 404s
+
+        // ─── Controls ────────────────────────────────────────────────
+
+        const datasetSelect = document.getElementById('datasetSelect');
+        const columnSlider = document.getElementById('columnSlider');
+        const columnValue = document.getElementById('columnValue');
+        const rowsSelect = document.getElementById('rowsSelect');
+        const grid = document.getElementById('galleryGrid');
+
+        datasetSelect.addEventListener('change', () => {
+            currentDataset = parseInt(datasetSelect.value);
+            loadDataset();
+        });
+
+        columnSlider.addEventListener('input', () => {
+            const cols = columnSlider.value;
+            columnValue.textContent = cols + ' cols';
+            document.documentElement.style.setProperty('--columns', cols);
+            renderCurrentView();
+        });
+
+        rowsSelect.addEventListener('change', () => {
+            viewPage = 1;
+            renderCurrentView();
+        });
+
+        // ─── Helpers ─────────────────────────────────────────────────
+
+        function getColumns() {
+            return parseInt(columnSlider.value);
+        }
+
+        function getRowsSetting() {
+            const val = rowsSelect.value;
+            return val === 'all' ? 'all' : parseInt(val);
+        }
+
+        function getImagesPerView() {
+            const rows = getRowsSetting();
+            if (rows === 'all') return totalImages;
+            return rows * getColumns();
+        }
+
+        // ─── Dataset Loading (fetch all image paths at once) ─────────
+
+        async function loadDataset() {
+            allImages = [];
+            totalImages = 0;
+            viewPage = 1;
+            grid.innerHTML = '';
+            document.getElementById('paginationInfo').style.display = 'none';
+            document.getElementById('emptyMsg').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('imageCount').textContent = '';
+
+            try {
+                const resp = await fetch(`/api/gallery?dataset=${currentDataset}&page=1&per_page=10000`);
+                const data = await resp.json();
+                totalImages = data.total;
+                allImages = data.images;
+
+                document.getElementById('loading').style.display = 'none';
+
+                if (totalImages === 0) {
+                    document.getElementById('emptyMsg').style.display = 'block';
+                    document.getElementById('imageCount').textContent = '0 images';
+                    return;
+                }
+
+                renderCurrentView();
+            } catch (e) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('emptyMsg').style.display = 'block';
+                document.getElementById('emptyMsg').textContent = 'Error loading gallery: ' + e.message;
+            }
+        }
+
+        // ─── Render Current View ─────────────────────────────────────
+
+        function renderCurrentView() {
+            if (totalImages === 0) return;
+
+            const perView = getImagesPerView();
+            const start = (viewPage - 1) * perView;
+            const end = Math.min(start + perView, totalImages);
+            const visible = allImages.slice(start, end);
+            const totalPages = perView >= totalImages ? 1 : Math.ceil(totalImages / perView);
+
+            // Clear and render
+            grid.innerHTML = '';
+            for (let i = 0; i < visible.length; i++) {
+                const globalIdx = start + i;
+                const src = visible[i];
+                const filename = src.split('/').pop();
+
+                const item = document.createElement('div');
+                item.className = 'gallery-item';
+                item.onclick = () => openLightbox(globalIdx);
+
+                const img = document.createElement('img');
+                img.loading = 'lazy';
+                img.src = src + cacheBust;
+                img.alt = filename;
+
+                const label = document.createElement('div');
+                label.className = 'img-label';
+                label.textContent = filename;
+
+                item.appendChild(img);
+                item.appendChild(label);
+                grid.appendChild(item);
+            }
+
+            // Update count
+            if (getRowsSetting() === 'all') {
+                document.getElementById('imageCount').textContent =
+                    `${totalImages.toLocaleString()} images`;
+            } else {
+                document.getElementById('imageCount').textContent =
+                    `${(start + 1).toLocaleString()}\u2013${end.toLocaleString()} of ${totalImages.toLocaleString()} images`;
+            }
+
+            // Update pagination
+            const pagInfo = document.getElementById('paginationInfo');
+            const prevBtn = document.getElementById('prevPageBtn');
+            const nextBtn = document.getElementById('nextPageBtn');
+            const indicator = document.getElementById('pageIndicator');
+
+            if (totalPages > 1) {
+                pagInfo.style.display = 'flex';
+                prevBtn.style.display = viewPage > 1 ? 'inline-block' : 'none';
+                nextBtn.style.display = viewPage < totalPages ? 'inline-block' : 'none';
+                indicator.textContent = `Page ${viewPage} of ${totalPages}`;
+            } else {
+                pagInfo.style.display = 'none';
+            }
+        }
+
+        function prevPage() {
+            if (viewPage > 1) {
+                viewPage--;
+                renderCurrentView();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        }
+
+        function nextPage() {
+            const perView = getImagesPerView();
+            const totalPages = Math.ceil(totalImages / perView);
+            if (viewPage < totalPages) {
+                viewPage++;
+                renderCurrentView();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        }
+
+        // ─── Lightbox ────────────────────────────────────────────────
+
+        function openLightbox(index) {
+            lightboxIndex = index;
+            updateLightbox();
+            document.getElementById('lightbox').classList.add('active');
+            document.body.style.overflow = 'hidden';
+            document.addEventListener('keydown', handleLightboxKey);
+        }
+
+        function closeLightbox() {
+            document.getElementById('lightbox').classList.remove('active');
+            document.body.style.overflow = '';
+            document.removeEventListener('keydown', handleLightboxKey);
+            lightboxIndex = -1;
+        }
+
+        function lightboxPrev() {
+            if (lightboxIndex > 0) {
+                lightboxIndex--;
+                updateLightbox();
+            }
+        }
+
+        function lightboxNext() {
+            if (lightboxIndex < allImages.length - 1) {
+                lightboxIndex++;
+                updateLightbox();
+            }
+        }
+
+        function updateLightbox() {
+            const src = allImages[lightboxIndex];
+            const filename = src.split('/').pop();
+            const img = document.getElementById('lbImage');
+            const loading = document.getElementById('lbLoading');
+            const error = document.getElementById('lbError');
+
+            // Show loading, hide error
+            loading.style.display = '';
+            error.style.display = 'none';
+            img.style.display = 'none';
+
+            // Set up load/error handlers before setting src
+            img.onload = function() {
+                loading.style.display = 'none';
+                error.style.display = 'none';
+                img.style.display = '';
+            };
+            img.onerror = function() {
+                loading.style.display = 'none';
+                error.style.display = '';
+                img.style.display = 'none';
+            };
+
+            img.src = src + '?v=' + Date.now();
+            document.getElementById('lbCounter').textContent =
+                `${(lightboxIndex + 1).toLocaleString()} of ${totalImages.toLocaleString()}`;
+
+            // Parse metadata from filename: {stem}_p{page}.jpg
+            const match = filename.match(/^(.+)_p(\d+)\.jpg$/);
+            const pdfName = match ? match[1] + '.pdf' : filename;
+            const pageNum = match ? parseInt(match[2]) : '';
+            document.getElementById('lbMeta').innerHTML =
+                `<span>File: ${escapeHtml(pdfName)}</span>` +
+                (pageNum ? `<span>Page: ${pageNum}</span>` : '') +
+                `<span>Dataset: ${currentDataset}</span>`;
+
+            // Enable/disable nav buttons
+            const atStart = lightboxIndex === 0;
+            const atEnd = lightboxIndex >= allImages.length - 1;
+            document.getElementById('lbPrevTop').disabled = atStart;
+            document.getElementById('lbNextTop').disabled = atEnd;
+            document.getElementById('lbPrevArrow').style.visibility = atStart ? 'hidden' : 'visible';
+            document.getElementById('lbNextArrow').style.visibility = atEnd ? 'hidden' : 'visible';
+
+            // Preload adjacent images
+            if (lightboxIndex > 0) {
+                const prev = new Image();
+                prev.src = allImages[lightboxIndex - 1] + '?v=' + Date.now();
+            }
+            if (lightboxIndex < allImages.length - 1) {
+                const next = new Image();
+                next.src = allImages[lightboxIndex + 1] + '?v=' + Date.now();
+            }
+        }
+
+        function retryLightbox() {
+            if (lightboxIndex >= 0) updateLightbox();
+        }
+
+        function handleLightboxKey(e) {
+            if (e.key === 'Escape') closeLightbox();
+            else if (e.key === 'ArrowLeft') lightboxPrev();
+            else if (e.key === 'ArrowRight') lightboxNext();
+        }
+
+        // Click on backdrop areas to close (body background, not image/buttons)
+        document.getElementById('lightboxBody').addEventListener('click', function(e) {
+            if (e.target === this) closeLightbox();
+        });
+        document.getElementById('lightbox').addEventListener('click', function(e) {
+            if (e.target === this) closeLightbox();
+        });
+
+        // ─── Utility ─────────────────────────────────────────────────
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ─── Init ────────────────────────────────────────────────────
+
+        loadDataset();
+    </script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 # Data files (large, generated)
 epstein_doj_files/
 data/*.json
+data/thumbnails/
 *.json
 !package.json
 

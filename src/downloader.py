@@ -118,23 +118,42 @@ def extract_pdf_links_from_browser(page, base_url):
     return links
 
 
-def fetch_page_links(page, base_url, page_num):
+def fetch_page_links(page, base_url, page_num, max_retries=3):
     """Navigate to a paginated page and extract PDF links.
 
+    Retries on transient network errors (connection closed, timeout).
     Returns a set of PDF URLs found on the page.
     """
     page_url = f"{base_url}?page={page_num}" if page_num > 0 else base_url
 
-    try:
-        page.goto(page_url, wait_until="networkidle", timeout=30000)
-        time.sleep(1)
-    except PwTimeout:
+    for attempt in range(1, max_retries + 1):
         try:
-            page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
-            time.sleep(2)
-        except Exception:
-            print(f"    Page {page_num}: FAILED")
-            return set()
+            page.goto(page_url, wait_until="networkidle", timeout=30000)
+            time.sleep(1)
+            break
+        except PwTimeout:
+            try:
+                page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
+                time.sleep(2)
+                break
+            except Exception as e:
+                if attempt < max_retries:
+                    wait = attempt * 5
+                    print(f"    Page {page_num}: retry {attempt}/{max_retries} "
+                          f"in {wait}s ({type(e).__name__})")
+                    time.sleep(wait)
+                else:
+                    print(f"    Page {page_num}: FAILED after {max_retries} attempts")
+                    return set()
+        except Exception as e:
+            if attempt < max_retries:
+                wait = attempt * 5
+                print(f"    Page {page_num}: retry {attempt}/{max_retries} "
+                      f"in {wait}s ({type(e).__name__})")
+                time.sleep(wait)
+            else:
+                print(f"    Page {page_num}: FAILED after {max_retries} attempts")
+                return set()
 
     # Extract links before any barrier clicks — PDF links are already
     # in the DOM, and clicking age verification triggers a Drupal AJAX

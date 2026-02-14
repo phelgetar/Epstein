@@ -824,8 +824,13 @@
 <body>
     <div class="container">
         <header>
-            <h1>Epstein DOJ Files</h1>
-            <p class="subtitle">Document Search & Analysis System</p>
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:1rem;">
+                <div>
+                    <h1>Epstein DOJ Files</h1>
+                    <p class="subtitle">Document Search & Analysis System</p>
+                </div>
+                <a href="/static/gallery.html" style="font-family:'JetBrains Mono',monospace;font-size:0.875rem;color:var(--accent);text-decoration:none;text-transform:uppercase;letter-spacing:0.05em;padding:0.5rem 1rem;border:2px solid var(--accent);transition:all 0.2s ease;" onmouseover="this.style.background='var(--accent)';this.style.color='white'" onmouseout="this.style.background='';this.style.color='var(--accent)'">Gallery</a>
+            </div>
         </header>
 
         <main>
@@ -1339,14 +1344,27 @@
 
         // ─── PDF Viewer ─────────────────────────────────────────────
 
+        // iOS/iPad Safari cannot render multi-page PDFs inside iframes —
+        // it only shows the first page. Detect iOS and open in a new tab.
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
         function openPdfModal(filepath, filename, pageNumber) {
+            const url = pageNumber ? filepath + '#page=' + pageNumber : filepath;
+
+            // iOS: open in new tab where Safari's native viewer works fully
+            if (isIOS) {
+                window.open(url, '_blank');
+                return;
+            }
+
             const modal = document.getElementById('pdfModal');
             const title = document.getElementById('pdfModalTitle');
             const viewer = document.getElementById('pdfViewer');
             const body = document.getElementById('pdfModalBody');
 
             title.textContent = filename;
-            viewer.src = pageNumber ? filepath + '#page=' + pageNumber : filepath;
+            viewer.src = url;
 
             viewer.onerror = function() {
                 body.innerHTML = `
