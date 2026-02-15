@@ -517,6 +517,95 @@
             margin: 0 0.75rem;
         }
 
+        .lightbox-classification {
+            padding: 0.75rem 2rem 0;
+            text-align: center;
+        }
+
+        .lightbox-description {
+            font-size: 1rem;
+            color: var(--paper);
+            margin-bottom: 0.5rem;
+            line-height: 1.4;
+        }
+
+        .lightbox-tags {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 0.4rem;
+        }
+
+        .lightbox-tag {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            background: rgba(193, 68, 14, 0.3);
+            color: var(--accent-muted);
+            border: 1px solid rgba(193, 68, 14, 0.4);
+            border-radius: 2px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .lightbox-tag:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+        .content-type-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            background: rgba(250, 248, 243, 0.15);
+            color: var(--ink-light);
+            border-radius: 2px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .img-badge {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.55rem;
+            padding: 1px 4px;
+            background: rgba(26, 21, 18, 0.75);
+            color: var(--paper);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .filter-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 4px;
+        }
+
+        .filter-chip {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            background: var(--accent);
+            color: white;
+            border-radius: 2px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .filter-chip-x {
+            cursor: pointer;
+            font-weight: bold;
+            opacity: 0.7;
+        }
+
+        .filter-chip-x:hover {
+            opacity: 1;
+        }
+
         /* Footer */
         footer {
             margin-top: 4rem;
@@ -572,6 +661,7 @@
                     <div class="control-group">
                         <label class="control-label">Dataset</label>
                         <select id="datasetSelect" class="control-select">
+                            <option value="all">All Datasets</option>
                             <option value="1">Data Set 1</option>
                             <option value="2">Data Set 2</option>
                             <option value="3">Data Set 3</option>
@@ -601,6 +691,28 @@
                             <option value="100">100 rows</option>
                             <option value="200">200 rows</option>
                             <option value="all">All rows</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group" id="typeFilterGroup" style="display:none;">
+                        <label class="control-label">Type</label>
+                        <select id="contentTypeSelect" class="control-select">
+                            <option value="">All Types</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group" id="tagFilterGroup" style="display:none;">
+                        <label class="control-label">Tags</label>
+                        <select id="tagSelect" class="control-select">
+                            <option value="">Add tag...</option>
+                        </select>
+                        <div class="filter-chips" id="tagChips"></div>
+                    </div>
+
+                    <div class="control-group" id="personFilterGroup" style="display:none;">
+                        <label class="control-label">Person</label>
+                        <select id="personSelect" class="control-select">
+                            <option value="">All People</option>
                         </select>
                     </div>
 
@@ -644,6 +756,10 @@
                 <button class="lightbox-arrow right" onclick="lightboxNext()" id="lbNextArrow">&#8594;</button>
             </div>
             <div class="lightbox-footer">
+                <div class="lightbox-classification" id="lbClassification" style="display:none;">
+                    <div class="lightbox-description" id="lbDescription"></div>
+                    <div class="lightbox-tags" id="lbTags"></div>
+                </div>
                 <div class="lightbox-meta" id="lbMeta"></div>
             </div>
         </div>
@@ -656,12 +772,14 @@
     <script>
         // ─── State ──────────────────────────────────────────────────
 
-        let allImages = [];       // all image paths for current dataset
+        let allImages = [];          // image src paths for current page
+        let imageDatasetMap = {};    // src -> dataset number
+        let classificationMap = {};  // src -> {description, tags, content_type, people}
         let totalImages = 0;
-        let currentDataset = 1;
-        let viewPage = 1;         // current "page" of rows being viewed
+        let currentDataset = 'all';  // 'all' or integer
+        let viewPage = 1;
         let lightboxIndex = -1;
-        const cacheBust = '?v=' + Date.now();  // bust stale cached 404s
+        const cacheBust = '?v=' + Date.now();
 
         // ─── Controls ────────────────────────────────────────────────
 
@@ -669,23 +787,53 @@
         const columnSlider = document.getElementById('columnSlider');
         const columnValue = document.getElementById('columnValue');
         const rowsSelect = document.getElementById('rowsSelect');
+        const contentTypeSelect = document.getElementById('contentTypeSelect');
+        const tagSelect = document.getElementById('tagSelect');
+        const personSelect = document.getElementById('personSelect');
         const grid = document.getElementById('galleryGrid');
 
         datasetSelect.addEventListener('change', () => {
-            currentDataset = parseInt(datasetSelect.value);
-            loadDataset();
+            const val = datasetSelect.value;
+            currentDataset = val === 'all' ? 'all' : parseInt(val);
+            selectedTags = [];
+            renderTagChips();
+            viewPage = 1;
+            _lastStatsDataset = null;  // force stats reload
+            loadPage();
         });
 
         columnSlider.addEventListener('input', () => {
             const cols = columnSlider.value;
             columnValue.textContent = cols + ' cols';
             document.documentElement.style.setProperty('--columns', cols);
-            renderCurrentView();
+            viewPage = 1;
+            loadPage();
         });
 
         rowsSelect.addEventListener('change', () => {
             viewPage = 1;
-            renderCurrentView();
+            loadPage();
+        });
+
+        contentTypeSelect.addEventListener('change', () => {
+            viewPage = 1;
+            loadPage();
+        });
+        let selectedTags = [];  // multi-tag selection state
+
+        tagSelect.addEventListener('change', () => {
+            const val = tagSelect.value;
+            if (val && !selectedTags.includes(val)) {
+                selectedTags.push(val);
+                renderTagChips();
+                viewPage = 1;
+                loadPage();
+            }
+            tagSelect.value = '';  // reset to "Add tag..."
+        });
+        personSelect.addEventListener('change', () => {
+            viewPage = 1;
+            loadPage();
         });
 
         // ─── Helpers ─────────────────────────────────────────────────
@@ -699,29 +847,138 @@
             return val === 'all' ? 'all' : parseInt(val);
         }
 
-        function getImagesPerView() {
+        function getPerPage() {
             const rows = getRowsSetting();
-            if (rows === 'all') return totalImages;
+            if (rows === 'all') return 10000;
             return rows * getColumns();
         }
 
-        // ─── Dataset Loading (fetch all image paths at once) ─────────
+        // ─── Tag Chips ───────────────────────────────────────────────
 
-        async function loadDataset() {
-            allImages = [];
-            totalImages = 0;
+        function renderTagChips() {
+            const container = document.getElementById('tagChips');
+            container.innerHTML = selectedTags.map(tag =>
+                `<span class="filter-chip">${escapeHtml(tag)}<span class="filter-chip-x" onclick="removeTag('${escapeHtml(tag)}')">&times;</span></span>`
+            ).join('');
+        }
+
+        function removeTag(tag) {
+            selectedTags = selectedTags.filter(t => t !== tag);
+            renderTagChips();
             viewPage = 1;
+            loadPage();
+        }
+
+        // ─── Classification Stats (populates filter dropdowns) ───────
+
+        let _lastStatsDataset = null;
+
+        async function loadClassificationStats() {
+            // Only reload stats when dataset changes
+            if (_lastStatsDataset === currentDataset) return;
+            _lastStatsDataset = currentDataset;
+
+            try {
+                let url = '/api/classifications/stats';
+                if (currentDataset !== 'all') {
+                    url += `?dataset=${currentDataset}`;
+                }
+                const resp = await fetch(url);
+                const data = await resp.json();
+
+                if (data.classified_count > 0) {
+                    // Content type dropdown
+                    const savedCt = contentTypeSelect.value;
+                    contentTypeSelect.innerHTML = '<option value="">All Types</option>';
+                    for (const ct of data.content_types) {
+                        const count = data.content_type_counts[ct] || 0;
+                        const opt = document.createElement('option');
+                        opt.value = ct;
+                        opt.textContent = `${ct} (${count.toLocaleString()})`;
+                        contentTypeSelect.appendChild(opt);
+                    }
+                    contentTypeSelect.value = savedCt;
+                    document.getElementById('typeFilterGroup').style.display = '';
+
+                    // Tag dropdown
+                    const savedTag = tagSelect.value;
+                    tagSelect.innerHTML = '<option value="">Add tag...</option>';
+                    for (const tag of data.top_tags) {
+                        const opt = document.createElement('option');
+                        opt.value = tag;
+                        opt.textContent = tag;
+                        tagSelect.appendChild(opt);
+                    }
+                    tagSelect.value = savedTag;
+                    document.getElementById('tagFilterGroup').style.display = '';
+
+                    // Person dropdown
+                    if (data.top_people && data.top_people.length > 0) {
+                        const savedPerson = personSelect.value;
+                        personSelect.innerHTML = '<option value="">All People</option>';
+                        for (const person of data.top_people) {
+                            const count = data.people_counts[person] || 0;
+                            const opt = document.createElement('option');
+                            opt.value = person;
+                            opt.textContent = `${person} (${count})`;
+                            personSelect.appendChild(opt);
+                        }
+                        personSelect.value = savedPerson;
+                        document.getElementById('personFilterGroup').style.display = '';
+                    } else {
+                        document.getElementById('personFilterGroup').style.display = 'none';
+                    }
+                } else {
+                    document.getElementById('typeFilterGroup').style.display = 'none';
+                    document.getElementById('tagFilterGroup').style.display = 'none';
+                    document.getElementById('personFilterGroup').style.display = 'none';
+                }
+            } catch (e) {
+                document.getElementById('typeFilterGroup').style.display = 'none';
+                document.getElementById('tagFilterGroup').style.display = 'none';
+                document.getElementById('personFilterGroup').style.display = 'none';
+            }
+        }
+
+        // ─── Page Loading (server-side pagination) ───────────────────
+
+        async function loadPage() {
             grid.innerHTML = '';
             document.getElementById('paginationInfo').style.display = 'none';
             document.getElementById('emptyMsg').style.display = 'none';
             document.getElementById('loading').style.display = 'block';
             document.getElementById('imageCount').textContent = '';
 
+            await loadClassificationStats();
+
+            const perPage = getPerPage();
+            let url = `/api/gallery?page=${viewPage}&per_page=${perPage}`;
+            if (currentDataset !== 'all') {
+                url += `&dataset=${currentDataset}`;
+            }
+            const ct = contentTypeSelect.value;
+            const person = personSelect.value;
+            if (ct) url += `&content_type=${encodeURIComponent(ct)}`;
+            if (selectedTags.length > 0) url += `&tag=${encodeURIComponent(selectedTags.join(','))}`;
+            if (person) url += `&person=${encodeURIComponent(person)}`;
+
             try {
-                const resp = await fetch(`/api/gallery?dataset=${currentDataset}&page=1&per_page=10000`);
+                const resp = await fetch(url);
                 const data = await resp.json();
                 totalImages = data.total;
-                allImages = data.images;
+
+                allImages = [];
+                imageDatasetMap = {};
+                classificationMap = {};
+
+                for (const item of data.images) {
+                    const src = item.src;
+                    allImages.push(src);
+                    imageDatasetMap[src] = item.dataset;
+                    if (item.classification) {
+                        classificationMap[src] = item.classification;
+                    }
+                }
 
                 document.getElementById('loading').style.display = 'none';
 
@@ -731,7 +988,7 @@
                     return;
                 }
 
-                renderCurrentView();
+                renderGrid(perPage);
             } catch (e) {
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('emptyMsg').style.display = 'block';
@@ -739,27 +996,24 @@
             }
         }
 
-        // ─── Render Current View ─────────────────────────────────────
+        // ─── Render Grid ────────────────────────────────────────────
 
-        function renderCurrentView() {
+        function renderGrid(perPage) {
             if (totalImages === 0) return;
 
-            const perView = getImagesPerView();
-            const start = (viewPage - 1) * perView;
-            const end = Math.min(start + perView, totalImages);
-            const visible = allImages.slice(start, end);
-            const totalPages = perView >= totalImages ? 1 : Math.ceil(totalImages / perView);
+            const start = (viewPage - 1) * perPage;
+            const end = Math.min(start + allImages.length, totalImages);
+            const totalPages = perPage >= totalImages ? 1 : Math.ceil(totalImages / perPage);
 
-            // Clear and render
             grid.innerHTML = '';
-            for (let i = 0; i < visible.length; i++) {
-                const globalIdx = start + i;
-                const src = visible[i];
+            for (let i = 0; i < allImages.length; i++) {
+                const src = allImages[i];
                 const filename = src.split('/').pop();
+                const dsNum = imageDatasetMap[src];
 
                 const item = document.createElement('div');
                 item.className = 'gallery-item';
-                item.onclick = () => openLightbox(globalIdx);
+                item.onclick = () => openLightbox(i);
 
                 const img = document.createElement('img');
                 img.loading = 'lazy';
@@ -768,23 +1022,31 @@
 
                 const label = document.createElement('div');
                 label.className = 'img-label';
-                label.textContent = filename;
+                label.textContent = currentDataset === 'all'
+                    ? `DS${dsNum}: ${filename}` : filename;
 
                 item.appendChild(img);
                 item.appendChild(label);
+
+                // Content-type badge if classified
+                const cls = classificationMap[src];
+                if (cls) {
+                    const badge = document.createElement('div');
+                    badge.className = 'img-badge';
+                    badge.textContent = cls.content_type;
+                    item.appendChild(badge);
+                }
+
                 grid.appendChild(item);
             }
 
             // Update count
-            if (getRowsSetting() === 'all') {
-                document.getElementById('imageCount').textContent =
-                    `${totalImages.toLocaleString()} images`;
-            } else {
-                document.getElementById('imageCount').textContent =
-                    `${(start + 1).toLocaleString()}\u2013${end.toLocaleString()} of ${totalImages.toLocaleString()} images`;
-            }
+            document.getElementById('imageCount').textContent =
+                totalPages <= 1
+                    ? `${totalImages.toLocaleString()} images`
+                    : `${(start + 1).toLocaleString()}\u2013${end.toLocaleString()} of ${totalImages.toLocaleString()} images`;
 
-            // Update pagination
+            // Pagination
             const pagInfo = document.getElementById('paginationInfo');
             const prevBtn = document.getElementById('prevPageBtn');
             const nextBtn = document.getElementById('nextPageBtn');
@@ -794,7 +1056,7 @@
                 pagInfo.style.display = 'flex';
                 prevBtn.style.display = viewPage > 1 ? 'inline-block' : 'none';
                 nextBtn.style.display = viewPage < totalPages ? 'inline-block' : 'none';
-                indicator.textContent = `Page ${viewPage} of ${totalPages}`;
+                indicator.textContent = `Page ${viewPage} of ${totalPages.toLocaleString()}`;
             } else {
                 pagInfo.style.display = 'none';
             }
@@ -803,17 +1065,17 @@
         function prevPage() {
             if (viewPage > 1) {
                 viewPage--;
-                renderCurrentView();
+                loadPage();
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             }
         }
 
         function nextPage() {
-            const perView = getImagesPerView();
-            const totalPages = Math.ceil(totalImages / perView);
+            const perPage = getPerPage();
+            const totalPages = Math.ceil(totalImages / perPage);
             if (viewPage < totalPages) {
                 viewPage++;
-                renderCurrentView();
+                loadPage();
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             }
         }
@@ -852,6 +1114,7 @@
         function updateLightbox() {
             const src = allImages[lightboxIndex];
             const filename = src.split('/').pop();
+            const dsNum = imageDatasetMap[src] || currentDataset;
             const img = document.getElementById('lbImage');
             const loading = document.getElementById('lbLoading');
             const error = document.getElementById('lbError');
@@ -861,7 +1124,6 @@
             error.style.display = 'none';
             img.style.display = 'none';
 
-            // Set up load/error handlers before setting src
             img.onload = function() {
                 loading.style.display = 'none';
                 error.style.display = 'none';
@@ -874,19 +1136,49 @@
             };
 
             img.src = src + '?v=' + Date.now();
-            document.getElementById('lbCounter').textContent =
-                `${(lightboxIndex + 1).toLocaleString()} of ${totalImages.toLocaleString()}`;
 
-            // Parse metadata from filename: {stem}_p{page}.jpg
+            const perPage = getPerPage();
+            const globalIdx = (viewPage - 1) * perPage + lightboxIndex;
+            document.getElementById('lbCounter').textContent =
+                `${(globalIdx + 1).toLocaleString()} of ${totalImages.toLocaleString()}`;
+
+            // Parse metadata from filename
             const match = filename.match(/^(.+)_p(\d+)\.jpg$/);
             const pdfName = match ? match[1] + '.pdf' : filename;
             const pageNum = match ? parseInt(match[2]) : '';
             document.getElementById('lbMeta').innerHTML =
                 `<span>File: ${escapeHtml(pdfName)}</span>` +
                 (pageNum ? `<span>Page: ${pageNum}</span>` : '') +
-                `<span>Dataset: ${currentDataset}</span>`;
+                `<span>Dataset: ${dsNum}</span>`;
 
-            // Enable/disable nav buttons
+            // Classification display
+            const clsDiv = document.getElementById('lbClassification');
+            const descDiv = document.getElementById('lbDescription');
+            const tagsDiv = document.getElementById('lbTags');
+            const cls = classificationMap[src];
+            if (cls) {
+                clsDiv.style.display = '';
+                descDiv.innerHTML =
+                    `<span class="content-type-badge">${escapeHtml(cls.content_type)}</span> ` +
+                    escapeHtml(cls.description);
+
+                let tagsHtml = (cls.tags || [])
+                    .map(t => `<span class="lightbox-tag" onclick="filterByTag('${escapeHtml(t)}')">${escapeHtml(t)}</span>`)
+                    .join('');
+
+                // People chips (styled differently)
+                const people = cls.people || [];
+                if (people.length > 0) {
+                    tagsHtml += people
+                        .map(p => `<span class="lightbox-tag" style="background:rgba(250,248,243,0.2);color:var(--paper);border-color:rgba(250,248,243,0.3);" onclick="filterByPerson('${escapeHtml(p)}')">${escapeHtml(p)}</span>`)
+                        .join('');
+                }
+                tagsDiv.innerHTML = tagsHtml;
+            } else {
+                clsDiv.style.display = 'none';
+            }
+
+            // Nav buttons
             const atStart = lightboxIndex === 0;
             const atEnd = lightboxIndex >= allImages.length - 1;
             document.getElementById('lbPrevTop').disabled = atStart;
@@ -894,7 +1186,7 @@
             document.getElementById('lbPrevArrow').style.visibility = atStart ? 'hidden' : 'visible';
             document.getElementById('lbNextArrow').style.visibility = atEnd ? 'hidden' : 'visible';
 
-            // Preload adjacent images
+            // Preload adjacent
             if (lightboxIndex > 0) {
                 const prev = new Image();
                 prev.src = allImages[lightboxIndex - 1] + '?v=' + Date.now();
@@ -909,13 +1201,29 @@
             if (lightboxIndex >= 0) updateLightbox();
         }
 
+        function filterByTag(tag) {
+            closeLightbox();
+            if (!selectedTags.includes(tag)) {
+                selectedTags.push(tag);
+                renderTagChips();
+            }
+            viewPage = 1;
+            loadPage();
+        }
+
+        function filterByPerson(person) {
+            closeLightbox();
+            personSelect.value = person.toLowerCase();
+            viewPage = 1;
+            loadPage();
+        }
+
         function handleLightboxKey(e) {
             if (e.key === 'Escape') closeLightbox();
             else if (e.key === 'ArrowLeft') lightboxPrev();
             else if (e.key === 'ArrowRight') lightboxNext();
         }
 
-        // Click on backdrop areas to close (body background, not image/buttons)
         document.getElementById('lightboxBody').addEventListener('click', function(e) {
             if (e.target === this) closeLightbox();
         });
@@ -933,7 +1241,7 @@
 
         // ─── Init ────────────────────────────────────────────────────
 
-        loadDataset();
+        loadPage();
     </script>
 </body>
 </html>

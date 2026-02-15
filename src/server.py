@@ -32,7 +32,7 @@ sentry_sdk.init(
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
-    PROJECT_ROOT, STATIC_DIR, DATA_DIR, PDF_DIR, THUMB_DIR,
+    PROJECT_ROOT, STATIC_DIR, DATA_DIR, PDF_DIR, THUMB_DIR, CLASSIFY_DIR,
     SERVER_HOST, PREFERRED_PORT, PORT_RANGE,
     JSON_SEARCH_INDEX, JSON_FULL,
 )
@@ -43,13 +43,36 @@ from src.search import PDFSearcher, _parse_and_search
 
 searcher: Optional[PDFSearcher] = None
 doc_stats: dict = {"total_docs": 0, "total_pages": 0}
+_classifications: dict = {}  # dataset_num -> {"metadata": {...}, "pages": {...}}
+_classifications_mtime: dict = {}  # dataset_num -> last mtime loaded
+
+
+# ─── Classification Loader ────────────────────────────────────
+
+def _load_classifications(ds: int) -> None:
+    """Load classification JSON for a dataset if the file is new or changed."""
+    cls_file = CLASSIFY_DIR / f"data-set-{ds}.json"
+    if not cls_file.exists():
+        return
+    try:
+        mtime = cls_file.stat().st_mtime
+        if ds in _classifications_mtime and _classifications_mtime[ds] == mtime:
+            return  # file unchanged
+        with open(cls_file, "r") as f:
+            _classifications[ds] = json.load(f)
+        _classifications_mtime[ds] = mtime
+        # Invalidate stats cache for this dataset and the "all" aggregate
+        _classification_stats_cache.pop(ds, None)
+        _classification_stats_cache.pop(None, None)
+    except Exception:
+        pass
 
 
 # ─── Lifespan ────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load search index into memory on startup."""
+    """Load search index and classification data into memory on startup."""
     global searcher, doc_stats
 
     # Find search index
@@ -72,6 +95,17 @@ async def lifespan(app: FastAPI):
     else:
         print("\nWarning: No search index found.")
         print("Run the extractor first: python -m src.extractor\n")
+
+    # Initial classification load
+    for ds in range(1, 13):
+        _load_classifications(ds)
+
+    cls_count = sum(
+        len(d.get("pages", {})) for d in _classifications.values()
+    )
+    if cls_count:
+        print(f"  Classifications loaded: {cls_count:,} images across "
+              f"{len(_classifications)} datasets")
 
     yield
 
@@ -205,32 +239,132 @@ async def search_api(
 
 _gallery_cache: dict = {}  # dataset -> sorted list of filenames
 
+
+def _get_dataset_images(ds: int, content_type: str = None,
+                        tags: list[str] = None, person: str = None) -> list[tuple[int, str]]:
+    """Return list of (dataset_num, filename) for a dataset, optionally filtered.
+    tags: list of tags — image must match ALL of them (AND logic).
+    """
+    _load_classifications(ds)
+    thumb_dir = THUMB_DIR / f"data-set-{ds}"
+    if not thumb_dir.exists():
+        return []
+
+    if ds not in _gallery_cache:
+        _gallery_cache[ds] = sorted(f.name for f in thumb_dir.glob("*.jpg"))
+
+    all_names = _gallery_cache[ds]
+    cls_data = _classifications.get(ds, {}).get("pages", {})
+
+    if content_type or tags or person:
+        filtered = []
+        for name in all_names:
+            cls = cls_data.get(name)
+            if not cls:
+                continue
+            if content_type and cls.get("content_type") != content_type:
+                continue
+            if tags:
+                img_tags = [t.lower() for t in cls.get("tags", [])]
+                if not all(t.lower() in img_tags for t in tags):
+                    continue
+            if person:
+                people = [p.lower() for p in cls.get("people", [])]
+                if person.lower() not in people:
+                    continue
+            filtered.append(name)
+        all_names = filtered
+
+    return [(ds, name) for name in all_names]
+
+
 @app.get("/api/gallery")
 async def gallery_api(
-    dataset: int = Query(..., ge=1, le=12),
+    dataset: Optional[int] = Query(None, ge=1, le=12),
     page: int = Query(1, ge=1),
     per_page: int = Query(100, ge=1, le=10000),
+    content_type: Optional[str] = Query(None),
+    tag: Optional[str] = Query(None),
+    person: Optional[str] = Query(None),
 ):
-    """List thumbnail images for a dataset, paginated."""
-    thumb_dir = THUMB_DIR / f"data-set-{dataset}"
-    if not thumb_dir.exists():
-        return {"images": [], "total": 0, "page": page, "perPage": per_page}
+    """List thumbnail images, paginated, with optional filters. dataset=None means all.
+    tag: comma-separated list of tags — image must match ALL (AND logic).
+    """
+    datasets_to_query = [dataset] if dataset is not None else list(range(1, 13))
+    tags = [t.strip() for t in tag.split(",") if t.strip()] if tag else None
 
-    # Cache the sorted file listing per dataset
-    if dataset not in _gallery_cache:
-        _gallery_cache[dataset] = sorted(f.name for f in thumb_dir.glob("*.jpg"))
+    all_items = []
+    for ds in datasets_to_query:
+        all_items.extend(_get_dataset_images(ds, content_type, tags, person))
 
-    all_images = _gallery_cache[dataset]
-    total = len(all_images)
+    total = len(all_items)
     start = (page - 1) * per_page
-    page_images = all_images[start:start + per_page]
+    page_items = all_items[start:start + per_page]
+
+    images_response = []
+    for ds_num, name in page_items:
+        entry = {
+            "src": f"/thumbnails/data-set-{ds_num}/{name}",
+            "dataset": ds_num,
+        }
+        cls_data = _classifications.get(ds_num, {}).get("pages", {})
+        cls = cls_data.get(name)
+        if cls:
+            entry["classification"] = cls
+        images_response.append(entry)
 
     return {
-        "images": [f"/thumbnails/data-set-{dataset}/{name}" for name in page_images],
+        "images": images_response,
         "total": total,
         "page": page,
         "perPage": per_page,
     }
+
+
+_classification_stats_cache: dict = {}  # key: dataset int or None (all)
+
+@app.get("/api/classifications/stats")
+async def classification_stats(dataset: Optional[int] = Query(None, ge=1, le=12)):
+    """Return available content_types, top tags, and top people for dataset(s)."""
+    datasets_to_query = [dataset] if dataset is not None else list(range(1, 13))
+    for ds in datasets_to_query:
+        _load_classifications(ds)
+
+    cache_key = dataset  # None for "all"
+    if cache_key in _classification_stats_cache:
+        return _classification_stats_cache[cache_key]
+
+    content_types = {}
+    tag_counts = {}
+    person_counts = {}
+    total_classified = 0
+
+    for ds in datasets_to_query:
+        cls_data = _classifications.get(ds, {}).get("pages", {})
+        for cls in cls_data.values():
+            total_classified += 1
+            ct = cls.get("content_type", "other")
+            content_types[ct] = content_types.get(ct, 0) + 1
+            for t in cls.get("tags", []):
+                t_lower = t.lower()
+                tag_counts[t_lower] = tag_counts.get(t_lower, 0) + 1
+            for p in cls.get("people", []):
+                p_lower = p.lower()
+                person_counts[p_lower] = person_counts.get(p_lower, 0) + 1
+
+    if not total_classified:
+        return {"content_types": [], "top_tags": [], "top_people": [], "classified_count": 0}
+
+    result = {
+        "content_types": sorted(content_types.keys()),
+        "content_type_counts": content_types,
+        "top_tags": [t for t, _ in sorted(tag_counts.items(), key=lambda x: -x[1])[:50]],
+        "top_people": [p for p, _ in sorted(person_counts.items(), key=lambda x: -x[1])],
+        "people_counts": person_counts,
+        "classified_count": total_classified,
+    }
+    _classification_stats_cache[cache_key] = result
+    return result
 
 
 # ─── Static File Mounts ─────────────────────────────────────

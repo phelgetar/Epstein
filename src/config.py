@@ -42,6 +42,13 @@ THUMB_WIDTH = 1000          # px wide (height auto-scaled)
 THUMB_QUALITY = 85          # JPEG quality (1-100)
 THUMB_WORKERS = 4           # Concurrent generation threads
 
+# Classification settings (Gemini Flash)
+CLASSIFY_DIR = DATA_DIR / "classifications"
+CLASSIFY_MODEL = "gemini-2.0-flash"
+CLASSIFY_WORKERS = 10           # Concurrent API calls
+CLASSIFY_RPM = 2000             # Requests per minute (paid tier; free = 15)
+CLASSIFY_SAVE_INTERVAL = 100    # Save JSON after every N classifications
+
 # Auto-reload settings
 WATCH_EXTENSIONS = {".py", ".html", ".css", ".js"}
 WATCH_DIRS = [

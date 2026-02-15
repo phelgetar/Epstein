@@ -2,6 +2,7 @@
 epstein_doj_files/
 data/*.json
 data/thumbnails/
+data/classifications/
 *.json
 !package.json
 
