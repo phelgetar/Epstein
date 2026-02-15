@@ -10,15 +10,20 @@ Features:
 """
 
 import json
+import os
 import socket
 import sys
 import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
+
+from dotenv import load_dotenv
+load_dotenv()
 
 import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
 from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -26,8 +31,15 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 sentry_sdk.init(
-    dsn="https://67ab20992c89e92e3d6f97f6d42e947b@o4510865601069056.ingest.us.sentry.io/4510865617911808",
+    dsn=os.environ.get("SENTRY_DSN", ""),
+    environment=os.environ.get("SENTRY_ENVIRONMENT", "development"),
+    release=os.environ.get("SENTRY_RELEASE"),
+    traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.2")),
     send_default_pii=True,
+    integrations=[
+        FastApiIntegration(),
+        StarletteIntegration(),
+    ],
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
