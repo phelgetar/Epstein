@@ -55,3 +55,7 @@ WATCH_DIRS = [
     str(PROJECT_ROOT / "src"),
     str(PROJECT_ROOT / "static"),
 ]
+
+# Logging
+LOG_DIR = DATA_DIR / "logs"
+LOG_FILE = LOG_DIR / "app.jsonl"

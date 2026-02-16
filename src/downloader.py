@@ -24,6 +24,7 @@ Usage:
 """
 
 import argparse
+import logging
 import os
 import re
 import sys
@@ -41,6 +42,8 @@ from src.config import (
     PDF_DIR, SOURCE_URL, NUM_DATASETS,
     DOWNLOAD_WORKERS, DOWNLOAD_BATCH_SIZE, PAGE_FETCH_DELAY,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ─── Browser Page Fetching ───────────────────────────────────
@@ -139,19 +142,33 @@ def fetch_page_links(page, base_url, page_num, max_retries=3):
             except Exception as e:
                 if attempt < max_retries:
                     wait = attempt * 5
+                    logger.warning("page_fetch_retry", extra={"data": {
+                        "page_num": page_num, "attempt": attempt,
+                        "max_retries": max_retries, "error_type": type(e).__name__,
+                    }})
                     print(f"    Page {page_num}: retry {attempt}/{max_retries} "
                           f"in {wait}s ({type(e).__name__})")
                     time.sleep(wait)
                 else:
+                    logger.error("page_fetch_failed", extra={"data": {
+                        "page_num": page_num, "max_retries": max_retries, "url": page_url,
+                    }})
                     print(f"    Page {page_num}: FAILED after {max_retries} attempts")
                     return set()
         except Exception as e:
             if attempt < max_retries:
                 wait = attempt * 5
+                logger.warning("page_fetch_retry", extra={"data": {
+                    "page_num": page_num, "attempt": attempt,
+                    "max_retries": max_retries, "error_type": type(e).__name__,
+                }})
                 print(f"    Page {page_num}: retry {attempt}/{max_retries} "
                       f"in {wait}s ({type(e).__name__})")
                 time.sleep(wait)
             else:
+                logger.error("page_fetch_failed", extra={"data": {
+                    "page_num": page_num, "max_retries": max_retries, "url": page_url,
+                }})
                 print(f"    Page {page_num}: FAILED after {max_retries} attempts")
                 return set()
 
@@ -184,20 +201,35 @@ def download_pdf(url, output_path, session):
     try:
         response = session.get(url, timeout=60)
         if response.status_code != 200:
+            logger.error("download_http_error", extra={"data": {
+                "url": url, "filename": filename, "status_code": response.status_code,
+            }})
             return url, False, f"  HTTP {response.status_code}: {filename}"
 
         if not response.content[:5].startswith(b"%PDF-"):
+            logger.warning("download_not_pdf", extra={"data": {
+                "url": url, "filename": filename,
+            }})
             return url, False, f"  Not a PDF: {filename}"
 
         with open(output_path, "wb") as f:
             f.write(response.content)
 
         size = output_path.stat().st_size
+        logger.info("download_success", extra={"data": {
+            "url": url, "filename": filename, "size_bytes": size,
+        }})
         return url, True, f"  Downloaded: {filename} ({size:,} bytes)"
 
     except requests.exceptions.Timeout:
+        logger.error("download_timeout", extra={"data": {
+            "url": url, "filename": filename,
+        }})
         return url, False, f"  Timeout: {filename}"
     except Exception as e:
+        logger.error("download_error", extra={"data": {
+            "url": url, "filename": filename,
+        }}, exc_info=True)
         return url, False, f"  Error: {filename} — {e}"
 
 
@@ -259,6 +291,10 @@ def download_dataset(dataset_num, workers, batch_size, dry_run, browser_context)
         # Discover pagination
         last_page = get_last_page_from_browser(page)
         total_pages = last_page + 1
+        logger.info("pagination_discovered", extra={"data": {
+            "dataset": dataset_num, "total_pages": total_pages,
+            "last_page": last_page, "base_url": base_url,
+        }})
         print(f"  Pages: {total_pages} (page 0 to {last_page})")
 
         # Set up requests session for downloads (reused across batches)
@@ -317,12 +353,21 @@ def download_dataset(dataset_num, workers, batch_size, dry_run, browser_context)
                 total_downloaded += dl
                 total_skipped += sk
                 total_failed += fl
+                logger.info("batch_complete", extra={"data": {
+                    "dataset": dataset_num, "batch_label": batch_label,
+                    "downloaded": dl, "skipped": sk, "failed": fl,
+                }})
                 print(f"    Batch done: {dl} downloaded, {sk} skipped, {fl} failed")
 
             # Clear batch from memory
             del batch_links
 
         # Summary
+        logger.info("dataset_download_complete", extra={"data": {
+            "dataset": dataset_num, "total_links": total_links,
+            "downloaded": total_downloaded, "skipped": total_skipped,
+            "failed": total_failed, "dry_run": dry_run,
+        }})
         print(f"\n  Data Set {dataset_num} complete:")
         print(f"    Total PDF links: {total_links}")
         if dry_run:
@@ -341,6 +386,9 @@ def download_dataset(dataset_num, workers, batch_size, dry_run, browser_context)
 # ─── Main ────────────────────────────────────────────────────
 
 def main():
+    from src.logging_setup import setup_logging
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Epstein DOJ Files Downloader",
         epilog="Examples:\n"
@@ -382,6 +430,12 @@ def main():
             print(f"Error: Dataset {d} is out of range (1-{NUM_DATASETS})")
             sys.exit(1)
 
+    logger.info("downloader_started", extra={"data": {
+        "datasets": datasets, "workers": args.workers,
+        "batch_size": args.batch_size, "dry_run": args.dry_run,
+        "headless": args.headless,
+    }})
+
     print("=" * 70)
     print("Epstein DOJ Files Downloader")
     print("=" * 70)
@@ -415,6 +469,10 @@ def main():
         finally:
             context.close()
             browser.close()
+
+    logger.info("downloader_complete", extra={"data": {
+        "grand_total": grand_total, "dry_run": args.dry_run,
+    }})
 
     print(f"\n{'=' * 70}")
     if args.dry_run:

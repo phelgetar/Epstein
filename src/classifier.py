@@ -21,6 +21,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
 import signal
 import sys
@@ -40,6 +41,8 @@ from src.config import (
     CLASSIFY_DIR, CLASSIFY_MODEL, CLASSIFY_WORKERS, CLASSIFY_RPM,
     CLASSIFY_SAVE_INTERVAL,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ─── Schema & Prompt ─────────────────────────────────────────
@@ -100,6 +103,9 @@ def classify_image(client, thumb_path, rate_limiter):
     try:
         image_bytes = thumb_path.read_bytes()
     except Exception as e:
+        logger.error("classify_read_error", extra={"data": {
+            "filename": filename,
+        }}, exc_info=True)
         print(f"  Error reading {filename}: {e}")
         return filename, None, 0
 
@@ -124,6 +130,10 @@ def classify_image(client, thumb_path, rate_limiter):
                 tokens = response.usage_metadata.total_token_count or 0
 
             parsed = json.loads(response.text)
+            logger.debug("classify_success", extra={"data": {
+                "filename": filename, "tokens": tokens,
+                "content_type": parsed.get("content_type"),
+            }})
             return filename, parsed, tokens
 
         except Exception as e:
@@ -131,10 +141,17 @@ def classify_image(client, thumb_path, rate_limiter):
             is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
             if is_rate_limit and attempt < MAX_RETRIES - 1:
                 backoff = INITIAL_BACKOFF * (2 ** attempt)
+                logger.warning("classify_rate_limited", extra={"data": {
+                    "filename": filename, "attempt": attempt + 1,
+                    "max_retries": MAX_RETRIES, "backoff_s": backoff,
+                }})
                 print(f"  Rate limited on {filename}, retrying in {backoff:.0f}s "
                       f"(attempt {attempt + 1}/{MAX_RETRIES})")
                 time.sleep(backoff)
                 continue
+            logger.error("classify_error", extra={"data": {
+                "filename": filename,
+            }}, exc_info=True)
             print(f"  Error classifying {filename}: {e}")
             return filename, None, 0
 
@@ -242,6 +259,12 @@ def classify_dataset(dataset_num, client, rate_limiter, workers,
                 # Progress report every 100
                 if processed % 100 == 0 or processed == len(to_classify):
                     est_cost = cost_state["total_tokens"] * 0.00000015
+                    logger.info("classify_progress", extra={"data": {
+                        "dataset": dataset_num, "processed": processed,
+                        "total": len(to_classify), "classified": classified,
+                        "failed": failed, "total_tokens": cost_state["total_tokens"],
+                        "est_cost": round(est_cost, 4),
+                    }})
                     print(f"  [{processed:,}/{len(to_classify):,}] "
                           f"classified={classified:,} failed={failed:,} "
                           f"tokens={cost_state['total_tokens']:,} ~${est_cost:.2f}")
@@ -254,11 +277,20 @@ def classify_dataset(dataset_num, client, rate_limiter, workers,
                 if cost_state.get("max_cost"):
                     est_cost = cost_state["total_tokens"] * 0.00000015
                     if est_cost >= cost_state["max_cost"]:
+                        logger.warning("classify_cost_cap_reached", extra={"data": {
+                            "dataset": dataset_num, "est_cost": round(est_cost, 4),
+                            "max_cost": cost_state["max_cost"],
+                        }})
                         print(f"  COST CAP REACHED (~${est_cost:.2f})")
                         interrupted.set()
 
     # Final save
     save_progress()
+
+    logger.info("classify_dataset_complete", extra={"data": {
+        "dataset": dataset_num, "classified": classified,
+        "skipped": len(existing) - classified, "failed": failed,
+    }})
 
     print(f"\n  Data Set {dataset_num} complete:")
     print(f"    Classified: {classified:,}")
@@ -297,6 +329,9 @@ def _parse_datasets(spec: str) -> list[int]:
 # ─── Main ─────────────────────────────────────────────────────
 
 def main():
+    from src.logging_setup import setup_logging
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Epstein DOJ Files — Image Classifier (Gemini Flash)",
         epilog="Examples:\n"
@@ -349,6 +384,12 @@ def main():
     datasets = _parse_datasets(args.dataset) if args.dataset else list(range(1, NUM_DATASETS + 1))
 
     start_time = time.time()
+
+    logger.info("classifier_started", extra={"data": {
+        "model": CLASSIFY_MODEL, "datasets": datasets, "workers": args.workers,
+        "rpm": args.rpm, "force": args.force, "dry_run": args.dry_run,
+        "max_cost": args.max_cost,
+    }})
 
     print("=" * 70)
     print("Epstein DOJ Files — Image Classifier")
@@ -405,6 +446,12 @@ def main():
 
     elapsed = time.time() - start_time
     est_cost = cost_state["total_tokens"] * 0.00000015
+
+    logger.info("classifier_complete", extra={"data": {
+        "classified": grand_classified, "skipped": grand_skipped,
+        "failed": grand_failed, "total_tokens": cost_state["total_tokens"],
+        "est_cost": round(est_cost, 4), "elapsed_s": round(elapsed, 1),
+    }})
 
     print(f"\n{'=' * 70}")
     print(f"  Complete! ({elapsed:.1f}s)")

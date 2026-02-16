@@ -10,9 +10,11 @@ Features:
 """
 
 import json
+import logging
 import os
 import socket
 import sys
+import time as _time
 import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -48,7 +50,11 @@ from src.config import (
     SERVER_HOST, PREFERRED_PORT, PORT_RANGE,
     JSON_SEARCH_INDEX, JSON_FULL,
 )
+from src.logging_setup import setup_logging
 from src.search import PDFSearcher, _parse_and_search
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 # ─── Global State ────────────────────────────────────────────
@@ -77,7 +83,9 @@ def _load_classifications(ds: int) -> None:
         _classification_stats_cache.pop(ds, None)
         _classification_stats_cache.pop(None, None)
     except Exception:
-        pass
+        logger.error("classification_load_error", extra={"data": {
+            "dataset": ds, "file": str(cls_file),
+        }}, exc_info=True)
 
 
 # ─── Lifespan ────────────────────────────────────────────────
@@ -104,7 +112,15 @@ async def lifespan(app: FastAPI):
         searcher = PDFSearcher(str(json_file))
         doc_stats["total_docs"] = len(searcher.data)
         doc_stats["total_pages"] = sum(doc.get("pages", 0) for doc in searcher.data)
+        logger.info("server_startup", extra={"data": {
+            "index_file": str(json_file),
+            "total_docs": doc_stats["total_docs"],
+            "total_pages": doc_stats["total_pages"],
+        }})
     else:
+        logger.warning("server_startup_no_index", extra={"data": {
+            "candidates_checked": [str(c) for c in candidates],
+        }})
         print("\nWarning: No search index found.")
         print("Run the extractor first: python -m src.extractor\n")
 
@@ -116,10 +132,14 @@ async def lifespan(app: FastAPI):
         len(d.get("pages", {})) for d in _classifications.values()
     )
     if cls_count:
+        logger.info("classifications_loaded", extra={"data": {
+            "count": cls_count, "datasets": len(_classifications),
+        }})
         print(f"  Classifications loaded: {cls_count:,} images across "
               f"{len(_classifications)} datasets")
 
     yield
+    logger.info("server_shutdown")
 
 
 # ─── App ─────────────────────────────────────────────────────
@@ -160,7 +180,27 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = _time.perf_counter()
+        response = await call_next(request)
+        duration_ms = (_time.perf_counter() - start) * 1000
+        path = request.url.path
+        if path.startswith("/api/") or path == "/":
+            level = logging.WARNING if response.status_code >= 400 else logging.INFO
+            logger.log(level, "http_request", extra={"data": {
+                "method": request.method,
+                "path": path,
+                "query": str(request.url.query),
+                "status_code": response.status_code,
+                "duration_ms": round(duration_ms, 2),
+                "client": request.client.host if request.client else None,
+            }})
+        return response
+
+
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 
 # CORS — allow localhost and LAN origins
 app.add_middleware(
@@ -177,6 +217,11 @@ app.add_middleware(
 async def root():
     return RedirectResponse(url="/static/search.html")
 
+#
+# @app.get("/sentry-debug")
+# async def trigger_error():
+#     division_by_zero = 1 / 0
+#
 
 @app.get("/api/stats")
 async def stats():
@@ -197,6 +242,7 @@ async def search_api(
     use_regex: bool = Query(False),
 ):
     if searcher is None:
+        logger.warning("api_search_no_index", extra={"data": {"query": q}})
         return JSONResponse(
             status_code=503,
             content={"error": "Search index not loaded. Run: python -m src.extractor"},
@@ -239,6 +285,11 @@ async def search_api(
             "match_count": r["match_count"],
             "contexts": r["contexts"][:50],
         })
+
+    logger.info("api_search", extra={"data": {
+        "query": q, "total_results": total, "total_matches": total_matches,
+        "page": page, "per_page": per_page, "dataset_filter": dataset, "sort": sort,
+    }})
 
     return {
         "results": response_results,
@@ -325,6 +376,11 @@ async def gallery_api(
             entry["classification"] = cls
         images_response.append(entry)
 
+    logger.info("api_gallery", extra={"data": {
+        "dataset": dataset, "content_type": content_type,
+        "tag": tag, "person": person, "total": total, "page": page,
+    }})
+
     return {
         "images": images_response,
         "total": total,
@@ -376,6 +432,9 @@ async def classification_stats(dataset: Optional[int] = Query(None, ge=1, le=12)
         "classified_count": total_classified,
     }
     _classification_stats_cache[cache_key] = result
+    logger.info("api_classification_stats", extra={"data": {
+        "dataset": dataset, "classified_count": total_classified,
+    }})
     return result
 
 
@@ -436,6 +495,10 @@ def main():
         s.close()
     except Exception:
         pass
+
+    logger.info("server_starting", extra={"data": {
+        "host": SERVER_HOST, "port": port, "lan_ip": lan_ip,
+    }})
 
     print("=" * 70)
     print("Epstein DOJ Files - FastAPI Search Interface")

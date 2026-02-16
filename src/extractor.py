@@ -6,6 +6,7 @@ Uses pdftotext/pdfinfo (Poppler) for text extraction.
 """
 
 import json
+import logging
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -17,6 +18,8 @@ from src.config import (
     SOURCE_URL, NUM_DATASETS,
     JSON_FULL, JSON_SEARCH_INDEX, JSON_SUMMARY, JSON_FILE_LIST,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def extract_pdf_text(pdf_path):
@@ -32,6 +35,9 @@ def extract_pdf_text(pdf_path):
             return result.stdout
         return ""
     except Exception as e:
+        logger.error("pdftotext_error", extra={"data": {
+            "file": str(pdf_path),
+        }}, exc_info=True)
         print(f"    Error extracting with pdftotext: {e}")
         return ""
 
@@ -52,6 +58,9 @@ def extract_pdf_info(pdf_path):
                 info[key.strip()] = value.strip()
         return info
     except Exception as e:
+        logger.error("pdfinfo_error", extra={"data": {
+            "file": str(pdf_path),
+        }}, exc_info=True)
         print(f"    Error getting PDF info: {e}")
         return {}
 
@@ -112,6 +121,9 @@ def process_all_pdfs():
     }
 
     if not PDF_DIR.exists():
+        logger.error("pdf_dir_not_found", extra={"data": {
+            "directory": str(PDF_DIR),
+        }})
         print(f"Error: Directory '{PDF_DIR}' does not exist")
         return None
 
@@ -150,7 +162,16 @@ def process_all_pdfs():
                 total_files += 1
                 total_size += file_data["size_mb"]
                 total_pages += file_data["pages"]
+                logger.info("pdf_extracted", extra={"data": {
+                    "filename": pdf_path.name, "dataset": i,
+                    "pages": file_data["pages"],
+                    "text_length": file_data["text_length"],
+                    "size_mb": file_data["size_mb"],
+                }})
             except Exception as e:
+                logger.error("pdf_extraction_error", extra={"data": {
+                    "filename": pdf_path.name, "dataset": i,
+                }}, exc_info=True)
                 print(f"  Error processing {pdf_path.name}: {e}")
                 dataset["files"].append({
                     "filename": pdf_path.name,
@@ -221,6 +242,10 @@ def save_json_files(data):
     with open(full_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     files_created.append(str(full_path))
+    logger.info("json_file_created", extra={"data": {
+        "file": str(full_path),
+        "size_mb": round(full_path.stat().st_size / (1024 * 1024), 1),
+    }})
     print(f"  Size: {full_path.stat().st_size / (1024 * 1024):.1f} MB")
 
     # 2. Summary JSON (no full text)
@@ -239,6 +264,10 @@ def save_json_files(data):
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary_data, f, indent=2, ensure_ascii=False)
     files_created.append(str(summary_path))
+    logger.info("json_file_created", extra={"data": {
+        "file": str(summary_path),
+        "size_mb": round(summary_path.stat().st_size / (1024 * 1024), 1),
+    }})
     print(f"  Size: {summary_path.stat().st_size / (1024 * 1024):.1f} MB")
 
     # 3. Search index (flat)
@@ -248,6 +277,10 @@ def save_json_files(data):
     with open(search_path, "w", encoding="utf-8") as f:
         json.dump(search_index, f, indent=2, ensure_ascii=False)
     files_created.append(str(search_path))
+    logger.info("json_file_created", extra={"data": {
+        "file": str(search_path),
+        "size_mb": round(search_path.stat().st_size / (1024 * 1024), 1),
+    }})
     print(f"  Size: {search_path.stat().st_size / (1024 * 1024):.1f} MB")
 
     # 4. File listing
@@ -268,6 +301,10 @@ def save_json_files(data):
     with open(list_path, "w", encoding="utf-8") as f:
         json.dump(file_list, f, indent=2, ensure_ascii=False)
     files_created.append(str(list_path))
+    logger.info("json_file_created", extra={"data": {
+        "file": str(list_path),
+        "size_mb": round(list_path.stat().st_size / (1024 * 1024), 1),
+    }})
     print(f"  Size: {list_path.stat().st_size / (1024 * 1024):.1f} MB")
 
     return files_created
@@ -297,6 +334,9 @@ def print_summary(data):
 
 
 def main():
+    from src.logging_setup import setup_logging
+    setup_logging()
+
     print("Epstein DOJ Files - PDF to JSON Converter")
     print("=" * 60)
     print()
@@ -316,6 +356,13 @@ def main():
 
     print_summary(data)
     files_created = save_json_files(data)
+
+    logger.info("extraction_complete", extra={"data": {
+        "total_files": data["metadata"]["total_files"],
+        "total_pages": data["metadata"]["total_pages"],
+        "total_size_mb": data["metadata"]["total_size_mb"],
+        "files_created": len(files_created),
+    }})
 
     print("\n" + "=" * 60)
     print("COMPLETE!")

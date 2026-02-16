@@ -5,6 +5,7 @@ Use this if poppler (pdftotext/pdfinfo) is not available.
 """
 
 import json
+import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,8 @@ from src.config import (
     DATA_DIR, PDF_DIR, NUM_DATASETS, SOURCE_URL,
     JSON_FULL, JSON_SUMMARY,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def process_pdfs(num_datasets=NUM_DATASETS):
@@ -85,8 +88,15 @@ def process_pdfs(num_datasets=NUM_DATASETS):
                         "pages": pages_data,
                     }
                     dataset["files"].append(file_data)
+                    logger.info("pdf_extracted", extra={"data": {
+                        "filename": pdf_path.name, "dataset": i,
+                        "pages": len(pdf.pages), "text_length": len(full_text),
+                    }})
 
             except Exception as e:
+                logger.error("pdf_extraction_error", extra={"data": {
+                    "filename": pdf_path.name, "dataset": i,
+                }}, exc_info=True)
                 print(f"    Error processing {pdf_path.name}: {e}")
                 dataset["files"].append({
                     "filename": pdf_path.name,
@@ -100,6 +110,9 @@ def process_pdfs(num_datasets=NUM_DATASETS):
 
 
 def main():
+    from src.logging_setup import setup_logging
+    setup_logging()
+
     print("Starting PDF extraction with pdfplumber...")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -125,6 +138,11 @@ def main():
     summary_path = DATA_DIR / JSON_SUMMARY
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary_data, f, indent=2, ensure_ascii=False)
+
+    logger.info("extraction_complete", extra={"data": {
+        "tool": "pdfplumber",
+        "files": [str(full_path), str(summary_path)],
+    }})
 
     print("\nExtraction complete!")
     print("Files created:")

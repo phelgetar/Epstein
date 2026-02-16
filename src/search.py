@@ -10,12 +10,15 @@ import argparse
 import bisect
 import csv
 import json
+import logging
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import DATA_DIR, JSON_SEARCH_INDEX, JSON_FULL
+
+logger = logging.getLogger(__name__)
 
 
 def _position_to_page(position, page_offsets):
@@ -40,6 +43,9 @@ class PDFSearcher:
                     json_file = str(candidate)
                     break
             else:
+                logger.error("search_index_not_found", extra={"data": {
+                    "candidates": [str(c) for c in candidates],
+                }})
                 print("Error: No JSON search files found")
                 print("Run the extractor first: python -m src.extractor")
                 sys.exit(1)
@@ -47,6 +53,9 @@ class PDFSearcher:
         print(f"Loading {json_file}...")
         with open(json_file, "r", encoding="utf-8") as f:
             self.data = json.load(f)
+        logger.info("search_index_loaded", extra={"data": {
+            "file": json_file, "document_count": len(self.data),
+        }})
         print(f"Loaded {len(self.data)} documents")
 
     def search(self, query, case_sensitive=False, whole_word=False, context_chars=300):
@@ -94,6 +103,11 @@ class PDFSearcher:
                     "contexts": contexts,
                 })
 
+        logger.info("search_executed", extra={"data": {
+            "query": query, "result_count": len(results),
+            "match_count": sum(r["match_count"] for r in results),
+            "case_sensitive": case_sensitive, "whole_word": whole_word,
+        }})
         return results
 
     def search_multiple(self, queries, operator="AND"):
@@ -177,6 +191,10 @@ class PDFSearcher:
                     "contexts": contexts,
                 })
 
+        logger.info("search_proximity", extra={"data": {
+            "term1": term1, "term2": term2,
+            "max_distance": max_distance, "result_count": len(results),
+        }})
         return results
 
     def print_results(self, results, max_contexts=3):
@@ -288,6 +306,9 @@ def _export_csv(results, output=None):
     writer.writerow(["filename", "dataset", "pages", "match_count"])
     for r in results:
         writer.writerow([r["filename"], r["dataset"], r["pages"], r["match_count"]])
+    logger.info("search_export", extra={"data": {
+        "format": "csv", "result_count": len(results),
+    }})
 
 
 def _export_json(results, output=None):
@@ -303,6 +324,9 @@ def _export_json(results, output=None):
             "filepath": r["filepath"],
         })
     out.write(json.dumps(export_data, indent=2) + "\n")
+    logger.info("search_export", extra={"data": {
+        "format": "json", "result_count": len(results),
+    }})
 
 
 def interactive_search():
@@ -338,10 +362,14 @@ def interactive_search():
             print("\n\nGoodbye!")
             break
         except Exception as e:
+            logger.error("search_error", extra={"data": {"query": query}}, exc_info=True)
             print(f"Error: {e}")
 
 
 def main():
+    from src.logging_setup import setup_logging
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Epstein DOJ Files - CLI Search",
         epilog='Examples:\n'

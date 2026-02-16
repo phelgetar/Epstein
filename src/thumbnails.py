@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import logging
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,6 +29,8 @@ from src.config import (
     THUMB_DIR, THUMB_WIDTH, THUMB_QUALITY, THUMB_WORKERS,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def render_pdf_pages(pdf_path, output_dir, width, quality, force):
     """Render all pages of a PDF as JPEG thumbnails.
@@ -40,6 +43,9 @@ def render_pdf_pages(pdf_path, output_dir, width, quality, force):
     try:
         doc = fitz.open(str(pdf_path))
     except Exception as e:
+        logger.error("thumbnail_open_error", extra={"data": {
+            "filename": pdf_path.name,
+        }}, exc_info=True)
         print(f"  Error opening {pdf_path.name}: {e}")
         return 0, 0, 1
 
@@ -59,6 +65,9 @@ def render_pdf_pages(pdf_path, output_dir, width, quality, force):
                 pix.save(str(out_path), output="jpeg", jpg_quality=quality)
                 generated += 1
             except Exception as e:
+                logger.error("thumbnail_render_error", extra={"data": {
+                    "filename": pdf_path.name, "page": page_num + 1,
+                }}, exc_info=True)
                 print(f"  Error rendering {pdf_path.name} page {page_num + 1}: {e}")
                 return generated, skipped, 1
 
@@ -113,14 +122,26 @@ def generate_dataset(dataset_num, workers, width, quality, force):
                 total_failed += fail
 
                 if gen > 0:
+                    logger.info("thumbnail_pdf_complete", extra={"data": {
+                        "filename": pdf_path.name, "dataset": dataset_num,
+                        "generated": gen, "skipped": skip,
+                    }})
                     print(f"  [{processed}/{len(pdf_files)}] "
                           f"{pdf_path.name}: {gen} generated, {skip} skipped")
                 elif processed % 50 == 0 or processed == len(pdf_files):
                     print(f"  [{processed}/{len(pdf_files)}] progress...")
             except Exception as e:
                 total_failed += 1
+                logger.error("thumbnail_pdf_error", extra={"data": {
+                    "filename": pdf_path.name, "dataset": dataset_num,
+                }}, exc_info=True)
                 print(f"  [{processed}/{len(pdf_files)}] "
                       f"{pdf_path.name}: ERROR — {e}")
+
+    logger.info("thumbnail_dataset_complete", extra={"data": {
+        "dataset": dataset_num, "generated": total_generated,
+        "skipped": total_skipped, "failed": total_failed,
+    }})
 
     print(f"\n  Data Set {dataset_num} complete:")
     print(f"    Generated: {total_generated}")
@@ -131,6 +152,9 @@ def generate_dataset(dataset_num, workers, width, quality, force):
 
 
 def main():
+    from src.logging_setup import setup_logging
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Epstein DOJ Files — Thumbnail Generator",
         epilog="Examples:\n"
@@ -172,6 +196,11 @@ def main():
 
     start_time = time.time()
 
+    logger.info("thumbnails_started", extra={"data": {
+        "datasets": datasets, "workers": args.workers,
+        "width": args.width, "quality": args.quality, "force": args.force,
+    }})
+
     print("=" * 70)
     print("Epstein DOJ Files — Thumbnail Generator")
     print("=" * 70)
@@ -198,6 +227,11 @@ def main():
         grand_failed += fail
 
     elapsed = time.time() - start_time
+
+    logger.info("thumbnails_complete", extra={"data": {
+        "generated": grand_generated, "skipped": grand_skipped,
+        "failed": grand_failed, "elapsed_s": round(elapsed, 1),
+    }})
 
     print(f"\n{'=' * 70}")
     print(f"  Complete! ({elapsed:.1f}s)")
