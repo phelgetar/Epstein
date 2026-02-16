@@ -48,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
     PROJECT_ROOT, STATIC_DIR, DATA_DIR, PDF_DIR, THUMB_DIR, CLASSIFY_DIR,
     SERVER_HOST, PREFERRED_PORT, PORT_RANGE,
-    JSON_SEARCH_INDEX, JSON_FULL,
+    JSON_SEARCH_INDEX, JSON_FULL, LOG_FILE,
 )
 from src.logging_setup import setup_logging
 from src.search import PDFSearcher, _parse_and_search
@@ -436,6 +436,100 @@ async def classification_stats(dataset: Optional[int] = Query(None, ge=1, le=12)
         "dataset": dataset, "classified_count": total_classified,
     }})
     return result
+
+
+# ─── Logs API ────────────────────────────────────────────────
+
+@app.get("/api/logs")
+async def logs_api(
+    q: Optional[str] = Query(None, description="Search text (matches event, module, data)"),
+    level: Optional[str] = Query(None, pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$"),
+    module: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(100, ge=1, le=1000),
+):
+    """Read and search JSONL log file."""
+    if not LOG_FILE.exists():
+        return {"lines": [], "total": 0, "page": page, "perPage": per_page}
+
+    # Read all lines and parse
+    entries = []
+    with open(LOG_FILE, "r", encoding="utf-8") as f:
+        for raw in f:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            # Filters
+            if level and entry.get("level") != level:
+                continue
+            if module and module not in entry.get("module", ""):
+                continue
+            if q:
+                q_lower = q.lower()
+                searchable = (
+                    entry.get("event", "")
+                    + " " + entry.get("module", "")
+                    + " " + entry.get("function", "")
+                    + " " + json.dumps(entry.get("data", {}))
+                    + " " + entry.get("exception", "")
+                ).lower()
+                if q_lower not in searchable:
+                    continue
+
+            entries.append(entry)
+
+    # Reverse chronological
+    entries.reverse()
+    total = len(entries)
+
+    # Paginate
+    start = (page - 1) * per_page
+    page_entries = entries[start:start + per_page]
+
+    return {
+        "lines": page_entries,
+        "total": total,
+        "page": page,
+        "perPage": per_page,
+    }
+
+
+@app.get("/api/logs/stats")
+async def logs_stats():
+    """Return log level counts and unique modules."""
+    if not LOG_FILE.exists():
+        return {"level_counts": {}, "modules": [], "total": 0}
+
+    level_counts = {}
+    modules = set()
+    total = 0
+
+    with open(LOG_FILE, "r", encoding="utf-8") as f:
+        for raw in f:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            total += 1
+            lvl = entry.get("level", "UNKNOWN")
+            level_counts[lvl] = level_counts.get(lvl, 0) + 1
+            mod = entry.get("module", "")
+            if mod:
+                modules.add(mod)
+
+    return {
+        "level_counts": level_counts,
+        "modules": sorted(modules),
+        "total": total,
+    }
 
 
 # ─── Static File Mounts ─────────────────────────────────────

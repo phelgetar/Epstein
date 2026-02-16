@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Epstein DOJ Files — Log Viewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --paper: #FAF8F3;
+            --ink-dark: #1A1512;
+            --ink-medium: #463E3A;
+            --ink-light: #8A817C;
+            --accent: #C1440E;
+            --accent-muted: #D4774E;
+            --border: #E0D9CF;
+            --highlight: #FFF4E6;
+            --shadow: rgba(26, 21, 18, 0.08);
+            --green: #2d6a4f;
+            --yellow: #b08800;
+            --red: #a4161a;
+        }
+
+        body {
+            font-family: 'Crimson Pro', Georgia, serif;
+            background: var(--paper);
+            color: var(--ink-dark);
+            line-height: 1.6;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-image: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(26, 21, 18, 0.01) 2px, rgba(26, 21, 18, 0.01) 4px);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .container { max-width: 1400px; margin: 0 auto; padding: 0 2rem; }
+
+        /* Header */
+        header {
+            border-bottom: 3px solid var(--ink-dark);
+            padding: 3rem 0 2rem;
+            margin-bottom: 3rem;
+            position: relative;
+        }
+        header::after {
+            content: '';
+            position: absolute;
+            bottom: -6px; left: 0; width: 100%; height: 1px;
+            background: var(--accent);
+        }
+        h1 { font-size: 4rem; font-weight: 700; letter-spacing: -0.03em; line-height: 1; margin-bottom: 0.5rem; }
+        .subtitle { font-size: 1.25rem; color: var(--ink-medium); font-weight: 400; letter-spacing: 0.02em; }
+
+        .nav-links {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .nav-link {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: var(--accent);
+            text-decoration: none;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.5rem 1rem;
+            border: 2px solid var(--accent);
+            transition: all 0.2s ease;
+        }
+        .nav-link:hover { background: var(--accent); color: white; }
+
+        /* Search & Filter */
+        .controls {
+            margin-bottom: 2rem;
+            background: white;
+            border: 2px solid var(--ink-dark);
+            box-shadow: 8px 8px 0 var(--shadow);
+            position: relative;
+        }
+        .controls::before {
+            content: '';
+            position: absolute;
+            top: -6px; left: 20px; right: 20px; height: 2px;
+            background: var(--accent);
+        }
+        .controls-header {
+            background: var(--ink-dark);
+            color: var(--paper);
+            padding: 1.5rem 2rem;
+        }
+        .controls-header h2 { font-size: 1.5rem; font-weight: 600; letter-spacing: 0.02em; }
+        .controls-body { padding: 2rem; }
+
+        .search-row {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        .search-input {
+            flex: 1;
+            padding: 1rem 1.5rem;
+            font-family: 'Crimson Pro', Georgia, serif;
+            font-size: 1.25rem;
+            border: 2px solid var(--border);
+            background: var(--paper);
+            color: var(--ink-dark);
+            transition: all 0.3s ease;
+        }
+        .search-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px rgba(193, 68, 14, 0.1); }
+        .search-button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 0.75rem 2rem;
+            font-family: 'Crimson Pro', Georgia, serif;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .search-button:hover { background: var(--ink-dark); }
+
+        .filter-row {
+            display: flex;
+            gap: 2rem;
+            flex-wrap: wrap;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+        }
+        .filter-group { display: flex; flex-direction: column; gap: 0.5rem; }
+        .filter-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--ink-light);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .filter-select {
+            padding: 0.5rem;
+            border: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            background: var(--paper);
+            color: var(--ink-dark);
+            min-width: 180px;
+        }
+
+        /* Stats bar */
+        .stats-bar {
+            display: flex;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+            margin-bottom: 2rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: var(--ink-medium);
+        }
+        .stat-pill {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.4rem 0.8rem;
+            border: 1px solid var(--border);
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+        .stat-pill:hover { border-color: var(--accent); }
+        .stat-pill.active { border-color: var(--accent); background: var(--highlight); }
+        .stat-pill .count { font-weight: 600; }
+        .stat-pill.level-ERROR .count { color: var(--red); }
+        .stat-pill.level-WARNING .count { color: var(--yellow); }
+        .stat-pill.level-INFO .count { color: var(--green); }
+        .stat-pill.level-DEBUG .count { color: var(--ink-light); }
+
+        /* Results */
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid var(--ink-dark);
+        }
+        .results-count { font-size: 1.5rem; font-weight: 600; }
+        .export-btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            padding: 0.5rem 1rem;
+            border: 2px solid var(--border);
+            background: white;
+            color: var(--ink-medium);
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            transition: all 0.2s ease;
+        }
+        .export-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+        /* Log entry */
+        .log-entry {
+            background: white;
+            border: 1px solid var(--border);
+            margin-bottom: 0.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            transition: all 0.15s ease;
+            cursor: pointer;
+        }
+        .log-entry:hover { border-color: var(--ink-medium); }
+        .log-entry.expanded { border-color: var(--accent); box-shadow: 4px 4px 0 var(--shadow); margin-bottom: 1rem; }
+
+        .log-summary {
+            display: flex;
+            align-items: center;
+            padding: 0.6rem 1rem;
+            gap: 1rem;
+        }
+
+        .log-time {
+            color: var(--ink-light);
+            white-space: nowrap;
+            min-width: 80px;
+        }
+
+        .log-level {
+            font-weight: 600;
+            padding: 0.15rem 0.5rem;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            min-width: 60px;
+            text-align: center;
+        }
+        .log-level.INFO { background: #d8f3dc; color: var(--green); }
+        .log-level.WARNING { background: #fff3cd; color: var(--yellow); }
+        .log-level.ERROR { background: #f8d7da; color: var(--red); }
+        .log-level.CRITICAL { background: var(--red); color: white; }
+        .log-level.DEBUG { background: #e9ecef; color: var(--ink-light); }
+
+        .log-module { color: var(--accent); min-width: 120px; }
+        .log-event { color: var(--ink-dark); font-weight: 500; flex: 1; }
+
+        .log-detail {
+            display: none;
+            padding: 1rem;
+            border-top: 1px solid var(--border);
+            background: var(--paper);
+        }
+        .log-entry.expanded .log-detail { display: block; }
+
+        .log-detail pre {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+            line-height: 1.5;
+            color: var(--ink-medium);
+        }
+
+        .log-detail .exception-block {
+            margin-top: 0.75rem;
+            padding: 0.75rem;
+            background: #fff5f5;
+            border-left: 3px solid var(--red);
+            color: var(--red);
+            font-size: 0.75rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.5rem;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+        .page-btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            padding: 0.5rem 1rem;
+            border: 2px solid var(--border);
+            background: white;
+            color: var(--ink-medium);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .page-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .page-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+        .page-btn:disabled { opacity: 0.4; cursor: default; }
+        .page-info { font-family: 'JetBrains Mono', monospace; font-size: 0.875rem; color: var(--ink-light); margin: 0 0.5rem; }
+
+        /* Loading */
+        .loading { text-align: center; padding: 4rem; font-size: 1.25rem; color: var(--ink-medium); }
+        .spinner {
+            display: inline-block;
+            width: 40px; height: 40px;
+            border: 4px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 1rem;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .empty-state { text-align: center; padding: 4rem; color: var(--ink-light); font-size: 1.25rem; }
+
+        /* Footer */
+        footer {
+            margin-top: 4rem;
+            padding: 2rem 0;
+            border-top: 2px solid var(--border);
+            text-align: center;
+            color: var(--ink-light);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            h1 { font-size: 2.5rem; }
+            .search-row { flex-direction: column; }
+            .filter-row { flex-direction: column; }
+            .log-summary { flex-wrap: wrap; gap: 0.5rem; }
+            .log-module { min-width: auto; }
+            .log-time { min-width: auto; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:1rem;">
+                <div>
+                    <h1>Log Viewer</h1>
+                    <p class="subtitle">Application Event Log</p>
+                </div>
+                <div class="nav-links">
+                    <a href="/static/search.html" class="nav-link">Search</a>
+                    <a href="/static/gallery.html" class="nav-link">Gallery</a>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <div class="controls">
+                <div class="controls-header">
+                    <h2>Search & Filter Logs</h2>
+                </div>
+                <div class="controls-body">
+                    <div class="search-row">
+                        <input type="text" id="searchInput" class="search-input"
+                            placeholder="Search events, modules, data..."
+                            autocomplete="off">
+                        <button id="searchButton" class="search-button" onclick="loadLogs(1)">Search</button>
+                    </div>
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label class="filter-label">Level</label>
+                            <select id="levelFilter" class="filter-select" onchange="loadLogs(1)">
+                                <option value="">All Levels</option>
+                                <option value="DEBUG">Debug</option>
+                                <option value="INFO">Info</option>
+                                <option value="WARNING">Warning</option>
+                                <option value="ERROR">Error</option>
+                                <option value="CRITICAL">Critical</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Module</label>
+                            <select id="moduleFilter" class="filter-select" onchange="loadLogs(1)">
+                                <option value="">All Modules</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Per Page</label>
+                            <select id="perPageSelect" class="filter-select" onchange="loadLogs(1)" style="min-width:100px;">
+                                <option value="50">50</option>
+                                <option value="100" selected>100</option>
+                                <option value="250">250</option>
+                                <option value="500">500</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats-bar" id="statsBar"></div>
+
+            <div id="loading" class="loading">
+                <div class="spinner"></div>
+                <p>Loading logs...</p>
+            </div>
+
+            <div id="resultsSection" style="display:none;">
+                <div class="results-header">
+                    <div class="results-count" id="resultsCount"></div>
+                    <button class="export-btn" onclick="exportLogs()">Export JSON</button>
+                </div>
+                <div id="logContainer"></div>
+                <div class="pagination" id="pagination"></div>
+            </div>
+
+            <div id="emptyState" class="empty-state" style="display:none;">
+                No log entries found.
+            </div>
+        </main>
+
+        <footer>
+            <p>Epstein DOJ Files — Log Viewer</p>
+        </footer>
+    </div>
+
+    <script>
+        let currentPage = 1;
+
+        // ─── Load Stats ──────────────────────────────────────────
+
+        async function loadStats() {
+            try {
+                const resp = await fetch('/api/logs/stats');
+                const data = await resp.json();
+
+                // Populate module filter
+                const modSelect = document.getElementById('moduleFilter');
+                data.modules.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m;
+                    opt.textContent = m.replace('src.', '');
+                    modSelect.appendChild(opt);
+                });
+
+                // Render stats pills
+                const bar = document.getElementById('statsBar');
+                const levels = ['ERROR', 'WARNING', 'INFO', 'DEBUG'];
+                let html = `<div class="stat-pill" onclick="clearLevelFilter()" style="cursor:pointer;">
+                    <span>Total</span>
+                    <span class="count">${data.total.toLocaleString()}</span>
+                </div>`;
+                for (const lvl of levels) {
+                    const count = data.level_counts[lvl] || 0;
+                    if (count === 0) continue;
+                    html += `<div class="stat-pill level-${lvl}" onclick="filterByLevel('${lvl}')">
+                        <span>${lvl}</span>
+                        <span class="count">${count.toLocaleString()}</span>
+                    </div>`;
+                }
+                bar.innerHTML = html;
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        }
+
+        function filterByLevel(level) {
+            const select = document.getElementById('levelFilter');
+            select.value = level;
+            loadLogs(1);
+        }
+
+        function clearLevelFilter() {
+            document.getElementById('levelFilter').value = '';
+            loadLogs(1);
+        }
+
+        // ─── Load Logs ───────────────────────────────────────────
+
+        async function loadLogs(page) {
+            if (page === undefined) page = 1;
+            currentPage = page;
+
+            const params = new URLSearchParams();
+            params.set('page', page);
+            params.set('per_page', document.getElementById('perPageSelect').value);
+
+            const q = document.getElementById('searchInput').value.trim();
+            if (q) params.set('q', q);
+
+            const level = document.getElementById('levelFilter').value;
+            if (level) params.set('level', level);
+
+            const module = document.getElementById('moduleFilter').value;
+            if (module) params.set('module', module);
+
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('resultsSection').style.display = 'none';
+            document.getElementById('emptyState').style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/logs?' + params.toString());
+                const data = await resp.json();
+
+                document.getElementById('loading').style.display = 'none';
+
+                if (data.total === 0) {
+                    document.getElementById('emptyState').style.display = 'block';
+                    return;
+                }
+
+                document.getElementById('resultsSection').style.display = 'block';
+                document.getElementById('resultsCount').textContent =
+                    `${data.total.toLocaleString()} log entries`;
+
+                renderLogs(data.lines);
+                renderPagination(data.total, Math.ceil(data.total / data.perPage), data.page);
+            } catch (e) {
+                document.getElementById('loading').innerHTML =
+                    `<div style="color:var(--red);">Failed to load logs: ${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        // ─── Render Log Entries ──────────────────────────────────
+
+        function renderLogs(entries) {
+            const container = document.getElementById('logContainer');
+            container.innerHTML = entries.map((entry, i) => {
+                const ts = entry.timestamp || '';
+                const timeStr = ts ? formatTime(ts) : '';
+                const level = entry.level || 'INFO';
+                const mod = (entry.module || '').replace('src.', '');
+                const event = entry.event || '';
+                const data = entry.data || {};
+                const exception = entry.exception || '';
+
+                const dataStr = Object.keys(data).length > 0
+                    ? JSON.stringify(data, null, 2)
+                    : '';
+
+                const exceptionHtml = exception
+                    ? `<div class="exception-block">${escapeHtml(exception)}</div>`
+                    : '';
+
+                return `
+                    <div class="log-entry" onclick="toggleExpand(this)">
+                        <div class="log-summary">
+                            <span class="log-time">${timeStr}</span>
+                            <span class="log-level ${level}">${level}</span>
+                            <span class="log-module">${escapeHtml(mod)}</span>
+                            <span class="log-event">${escapeHtml(event)}</span>
+                        </div>
+                        <div class="log-detail">
+                            <pre>${escapeHtml(dataStr)}</pre>
+                            ${exceptionHtml}
+                            <div style="margin-top:0.5rem;color:var(--ink-light);font-size:0.7rem;">
+                                ${escapeHtml(ts)} &mdash; ${escapeHtml(entry.module || '')}:${escapeHtml(entry.function || '')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function toggleExpand(el) {
+            el.classList.toggle('expanded');
+        }
+
+        function formatTime(isoStr) {
+            try {
+                const d = new Date(isoStr);
+                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                    + '.' + String(d.getMilliseconds()).padStart(3, '0');
+            } catch {
+                return isoStr.substring(11, 23);
+            }
+        }
+
+        // ─── Pagination ──────────────────────────────────────────
+
+        function renderPagination(total, totalPages, page) {
+            const pag = document.getElementById('pagination');
+            if (totalPages <= 1) { pag.innerHTML = ''; return; }
+
+            let html = `<button class="page-btn" onclick="goToPage(${page - 1})" ${page === 1 ? 'disabled' : ''}>Prev</button>`;
+
+            const pages = getPageNumbers(page, totalPages);
+            for (const p of pages) {
+                if (p === '...') {
+                    html += `<span class="page-info">...</span>`;
+                } else {
+                    html += `<button class="page-btn${p === page ? ' active' : ''}" onclick="goToPage(${p})">${p}</button>`;
+                }
+            }
+
+            html += `<button class="page-btn" onclick="goToPage(${page + 1})" ${page === totalPages ? 'disabled' : ''}>Next</button>`;
+            html += `<span class="page-info">${total.toLocaleString()} entries</span>`;
+            pag.innerHTML = html;
+        }
+
+        function getPageNumbers(current, total) {
+            if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+            const pages = [1];
+            if (current > 3) pages.push('...');
+            for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) pages.push(i);
+            if (current < total - 2) pages.push('...');
+            pages.push(total);
+            return pages;
+        }
+
+        function goToPage(page) {
+            loadLogs(page);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // ─── Export ──────────────────────────────────────────────
+
+        async function exportLogs() {
+            const params = new URLSearchParams();
+            params.set('page', 1);
+            params.set('per_page', 1000);
+
+            const q = document.getElementById('searchInput').value.trim();
+            if (q) params.set('q', q);
+            const level = document.getElementById('levelFilter').value;
+            if (level) params.set('level', level);
+            const module = document.getElementById('moduleFilter').value;
+            if (module) params.set('module', module);
+
+            try {
+                const resp = await fetch('/api/logs?' + params.toString());
+                const data = await resp.json();
+                const blob = new Blob([JSON.stringify(data.lines, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'logs-export.json';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                console.error('Export error:', e);
+            }
+        }
+
+        // ─── Utility ─────────────────────────────────────────────
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ─── Event Listeners ─────────────────────────────────────
+
+        document.getElementById('searchInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') loadLogs(1);
+        });
+
+        // ─── Init ────────────────────────────────────────────────
+
+        loadStats();
+        loadLogs(1);
+    </script>
+</body>
+</html>
