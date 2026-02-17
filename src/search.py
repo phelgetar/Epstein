@@ -50,13 +50,11 @@ class PDFSearcher:
                 print("Run the extractor first: python -m src.extractor")
                 sys.exit(1)
 
-        print(f"Loading {json_file}...")
         with open(json_file, "r", encoding="utf-8") as f:
             self.data = json.load(f)
         logger.info("search_index_loaded", extra={"data": {
             "file": json_file, "document_count": len(self.data),
         }})
-        print(f"Loaded {len(self.data)} documents")
 
     def search(self, query, case_sensitive=False, whole_word=False, context_chars=300):
         """Search for a term in all documents."""
@@ -332,21 +330,17 @@ def _export_json(results, output=None):
 def interactive_search():
     """Interactive search mode."""
     print("=" * 80)
-    print("Epstein DOJ Files - Interactive Search")
+    print("Epstein DOJ Files — Interactive Search")
     print("=" * 80)
+    print('  Operators: AND, OR, NOT, NEAR/N, "quoted phrases"')
+    print("  Type 'quit' to exit")
     print()
+
+    logger.info("search_started", extra={"data": {
+        "mode": "interactive",
+    }})
 
     searcher = PDFSearcher()
-
-    print("\nSearch Commands:")
-    print('  <term>                  - Search for a term')
-    print('  "exact phrase"          - Search for an exact phrase')
-    print("  term1 AND term2         - Documents with both terms")
-    print("  term1 OR term2          - Documents with either term")
-    print("  term1 NOT term2         - Exclude documents with term2")
-    print("  term1 NEAR/5 term2      - Terms within 5 words of each other")
-    print("  quit or exit            - Exit")
-    print()
 
     while True:
         try:
@@ -393,6 +387,14 @@ def main():
 
     if args.query:
         query = " ".join(args.query)
+
+        logger.info("search_started", extra={"data": {
+            "query": query, "mode": "cli",
+            "dataset_filter": args.dataset,
+            "sort": args.sort, "export": args.export,
+            "min_pages": args.min_pages, "max_pages": args.max_pages,
+        }})
+
         searcher = PDFSearcher()
         results = _parse_and_search(searcher, query)
 
@@ -410,6 +412,14 @@ def main():
             results.sort(key=lambda r: r["filename"])
         elif args.sort == "dataset":
             results.sort(key=lambda r: (r["dataset"], r["filename"]))
+
+        total_matches = sum(r["match_count"] for r in results)
+        logger.info("search_complete", extra={"data": {
+            "query": query, "documents_found": len(results),
+            "total_matches": total_matches,
+            "dataset_filter": args.dataset,
+            "export": args.export,
+        }})
 
         # Output
         if args.export == "csv":
