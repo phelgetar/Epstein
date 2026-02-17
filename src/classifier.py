@@ -163,14 +163,8 @@ def classify_image(client, thumb_path, rate_limiter):
 def classify_dataset(dataset_num, client, rate_limiter, workers,
                      force, dry_run, cost_state, interrupted):
     """Classify all thumbnails in a dataset. Returns (classified, skipped, failed)."""
-    print(f"\n{'=' * 70}")
-    print(f"  Data Set {dataset_num}")
-    print(f"{'=' * 70}")
-
     thumb_dir = THUMB_DIR / f"data-set-{dataset_num}"
     if not thumb_dir.exists():
-        print(f"  Thumbnail directory not found: {thumb_dir}")
-        print(f"  Run first: python -m src.thumbnails --dataset {dataset_num}")
         return 0, 0, 0
 
     output_path = CLASSIFY_DIR / f"data-set-{dataset_num}.json"
@@ -190,7 +184,6 @@ def classify_dataset(dataset_num, client, rate_limiter, workers,
     # Enumerate thumbnails
     all_thumbs = sorted(thumb_dir.glob("*.jpg"))
     if not all_thumbs:
-        print(f"  No thumbnails found in {thumb_dir}")
         return 0, 0, 0
 
     # Filter to unclassified (or all if --force)
@@ -199,13 +192,9 @@ def classify_dataset(dataset_num, client, rate_limiter, workers,
     else:
         to_classify = [t for t in all_thumbs if t.name not in existing]
 
-    print(f"  Thumbnails:         {len(all_thumbs):,}")
-    print(f"  Already classified: {len(existing):,}")
-    print(f"  To classify:        {len(to_classify):,}")
-
     if dry_run:
         estimated_cost = len(to_classify) * 0.0002
-        print(f"  Estimated cost:     ${estimated_cost:.2f}")
+        print(f"  Data Set {dataset_num}: {len(to_classify):,} to classify ~${estimated_cost:.2f}")
         return 0, len(existing), 0
 
     if not to_classify:
@@ -256,8 +245,8 @@ def classify_dataset(dataset_num, client, rate_limiter, workers,
 
                 processed = classified + failed
 
-                # Progress report every 100
-                if processed % 100 == 0 or processed == len(to_classify):
+                # Progress report every 500
+                if processed % 500 == 0 or processed == len(to_classify):
                     est_cost = cost_state["total_tokens"] * 0.00000015
                     logger.info("classify_progress", extra={"data": {
                         "dataset": dataset_num, "processed": processed,
@@ -266,8 +255,7 @@ def classify_dataset(dataset_num, client, rate_limiter, workers,
                         "est_cost": round(est_cost, 4),
                     }})
                     print(f"  [{processed:,}/{len(to_classify):,}] "
-                          f"classified={classified:,} failed={failed:,} "
-                          f"tokens={cost_state['total_tokens']:,} ~${est_cost:.2f}")
+                          f"~${est_cost:.2f}")
 
                 # Incremental save
                 if unsaved_count >= CLASSIFY_SAVE_INTERVAL:
@@ -291,11 +279,6 @@ def classify_dataset(dataset_num, client, rate_limiter, workers,
         "dataset": dataset_num, "classified": classified,
         "skipped": len(existing) - classified, "failed": failed,
     }})
-
-    print(f"\n  Data Set {dataset_num} complete:")
-    print(f"    Classified: {classified:,}")
-    print(f"    Skipped:    {len(existing) - classified:,}")
-    print(f"    Failed:     {failed:,}")
 
     return classified, len(existing) - classified, failed
 
@@ -391,21 +374,6 @@ def main():
         "max_cost": args.max_cost,
     }})
 
-    print("=" * 70)
-    print("Epstein DOJ Files — Image Classifier")
-    print("=" * 70)
-    print(f"  Model:      {CLASSIFY_MODEL}")
-    print(f"  Datasets:   {', '.join(str(d) for d in datasets)}")
-    print(f"  Workers:    {args.workers}")
-    print(f"  Rate limit: {args.rpm} RPM")
-    print(f"  Output:     {CLASSIFY_DIR.resolve()}")
-    if args.max_cost:
-        print(f"  Cost cap:   ${args.max_cost:.2f}")
-    if args.force:
-        print("  Mode:       FORCE (reclassifying all)")
-    if args.dry_run:
-        print("  Mode:       DRY RUN (no API calls)")
-
     # Initialize client
     client = None
     if not args.dry_run:
@@ -430,10 +398,10 @@ def main():
     grand_classified = 0
     grand_skipped = 0
     grand_failed = 0
+    dataset_failures = {}
 
     for dataset_num in datasets:
         if interrupted.is_set():
-            print(f"\n  Skipping remaining datasets (interrupted)")
             break
 
         cls, skip, fail = classify_dataset(
@@ -443,6 +411,8 @@ def main():
         grand_classified += cls
         grand_skipped += skip
         grand_failed += fail
+        if fail > 0:
+            dataset_failures[dataset_num] = fail
 
     elapsed = time.time() - start_time
     est_cost = cost_state["total_tokens"] * 0.00000015
@@ -460,7 +430,11 @@ def main():
     print(f"    Failed:     {grand_failed:,}")
     print(f"    Tokens:     {cost_state['total_tokens']:,}")
     print(f"    Est. cost:  ~${est_cost:.2f}")
-    print(f"    Output:     {CLASSIFY_DIR.resolve()}")
+    if dataset_failures:
+        print(f"\n  Failures by dataset:")
+        for ds, count in sorted(dataset_failures.items()):
+            print(f"    Data Set {ds}: {count} failed")
+    print(f"\n  Output: {CLASSIFY_DIR.resolve()}")
     print(f"{'=' * 70}")
 
 
