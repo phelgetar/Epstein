@@ -78,13 +78,8 @@ def render_pdf_pages(pdf_path, output_dir, width, quality, force):
 
 def generate_dataset(dataset_num, workers, width, quality, force):
     """Generate thumbnails for all PDFs in a dataset."""
-    print(f"\n{'=' * 70}")
-    print(f"  Data Set {dataset_num}")
-    print(f"{'=' * 70}")
-
     dataset_dir = PDF_DIR / f"data-set-{dataset_num}"
     if not dataset_dir.exists():
-        print(f"  PDF directory not found: {dataset_dir}")
         return 0, 0, 0
 
     output_dir = THUMB_DIR / f"data-set-{dataset_num}"
@@ -92,16 +87,11 @@ def generate_dataset(dataset_num, workers, width, quality, force):
 
     pdf_files = sorted(dataset_dir.glob("*.pdf"))
     if not pdf_files:
-        print(f"  No PDF files found in {dataset_dir}")
         return 0, 0, 0
-
-    print(f"  PDFs: {len(pdf_files)}")
-    print(f"  Output: {output_dir}")
 
     total_generated = 0
     total_skipped = 0
     total_failed = 0
-    processed = 0
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {}
@@ -113,7 +103,6 @@ def generate_dataset(dataset_num, workers, width, quality, force):
 
         for future in as_completed(futures):
             pdf_path = futures[future]
-            processed += 1
 
             try:
                 gen, skip, fail = future.result()
@@ -126,27 +115,17 @@ def generate_dataset(dataset_num, workers, width, quality, force):
                         "filename": pdf_path.name, "dataset": dataset_num,
                         "generated": gen, "skipped": skip,
                     }})
-                    print(f"  [{processed}/{len(pdf_files)}] "
-                          f"{pdf_path.name}: {gen} generated, {skip} skipped")
-                elif processed % 50 == 0 or processed == len(pdf_files):
-                    print(f"  [{processed}/{len(pdf_files)}] progress...")
             except Exception as e:
                 total_failed += 1
                 logger.error("thumbnail_pdf_error", extra={"data": {
                     "filename": pdf_path.name, "dataset": dataset_num,
                 }}, exc_info=True)
-                print(f"  [{processed}/{len(pdf_files)}] "
-                      f"{pdf_path.name}: ERROR — {e}")
+                print(f"  Error: {pdf_path.name} — {e}")
 
     logger.info("thumbnail_dataset_complete", extra={"data": {
         "dataset": dataset_num, "generated": total_generated,
         "skipped": total_skipped, "failed": total_failed,
     }})
-
-    print(f"\n  Data Set {dataset_num} complete:")
-    print(f"    Generated: {total_generated}")
-    print(f"    Skipped:   {total_skipped}")
-    print(f"    Failed:    {total_failed}")
 
     return total_generated, total_skipped, total_failed
 
@@ -201,22 +180,12 @@ def main():
         "width": args.width, "quality": args.quality, "force": args.force,
     }})
 
-    print("=" * 70)
-    print("Epstein DOJ Files — Thumbnail Generator")
-    print("=" * 70)
-    print(f"  Datasets:   {', '.join(str(d) for d in datasets)}")
-    print(f"  Workers:    {args.workers}")
-    print(f"  Width:      {args.width}px")
-    print(f"  Quality:    {args.quality}")
-    print(f"  Output:     {THUMB_DIR.resolve()}")
-    if args.force:
-        print("  Mode:       FORCE (regenerating all)")
-
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
 
     grand_generated = 0
     grand_skipped = 0
     grand_failed = 0
+    dataset_failures = {}
 
     for dataset_num in datasets:
         gen, skip, fail = generate_dataset(
@@ -225,6 +194,8 @@ def main():
         grand_generated += gen
         grand_skipped += skip
         grand_failed += fail
+        if fail > 0:
+            dataset_failures[dataset_num] = fail
 
     elapsed = time.time() - start_time
 
@@ -238,7 +209,11 @@ def main():
     print(f"    Generated: {grand_generated}")
     print(f"    Skipped:   {grand_skipped}")
     print(f"    Failed:    {grand_failed}")
-    print(f"    Output:    {THUMB_DIR.resolve()}")
+    if dataset_failures:
+        print(f"\n  Failures by dataset:")
+        for ds, count in sorted(dataset_failures.items()):
+            print(f"    Data Set {ds}: {count} failed")
+    print(f"\n  Output: {THUMB_DIR.resolve()}")
     print(f"{'=' * 70}")
 
 
