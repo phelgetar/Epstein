@@ -67,7 +67,6 @@ def extract_pdf_info(pdf_path):
 
 def process_single_pdf(pdf_path):
     """Process a single PDF file."""
-    print(f"  Processing: {pdf_path.name}")
 
     stats = pdf_path.stat()
     pdf_info = extract_pdf_info(pdf_path)
@@ -130,6 +129,8 @@ def process_all_pdfs():
     total_files = 0
     total_size = 0
     total_pages = 0
+    total_failed = 0
+    dataset_failures = {}
 
     for i in range(1, NUM_DATASETS + 1):
         dataset_dir = PDF_DIR / f"data-set-{i}"
@@ -142,18 +143,15 @@ def process_all_pdfs():
         }
 
         if not dataset_dir.exists():
-            print(f"Warning: {dataset_dir} does not exist, skipping...")
             data["datasets"].append(dataset)
             continue
 
         pdf_files = sorted(dataset_dir.glob("*.pdf"))
         if not pdf_files:
-            print(f"Data Set {i}: No PDF files found")
             data["datasets"].append(dataset)
             continue
 
-        print(f"\nData Set {i}: Processing {len(pdf_files)} PDFs")
-        print("-" * 60)
+        ds_failed = 0
 
         for pdf_path in pdf_files:
             try:
@@ -169,10 +167,12 @@ def process_all_pdfs():
                     "size_mb": file_data["size_mb"],
                 }})
             except Exception as e:
+                ds_failed += 1
+                total_failed += 1
                 logger.error("pdf_extraction_error", extra={"data": {
                     "filename": pdf_path.name, "dataset": i,
                 }}, exc_info=True)
-                print(f"  Error processing {pdf_path.name}: {e}")
+                print(f"  Error: {pdf_path.name} — {e}")
                 dataset["files"].append({
                     "filename": pdf_path.name,
                     "filepath": str(pdf_path),
@@ -186,17 +186,16 @@ def process_all_pdfs():
         dataset["total_size_mb"] = round(
             sum(f.get("size_mb", 0) for f in dataset["files"] if "size_mb" in f), 2
         )
-        print(
-            f"  Completed: {dataset['file_count']} files, "
-            f"{dataset['total_pages']} pages, {dataset['total_size_mb']} MB"
-        )
+        if ds_failed > 0:
+            dataset_failures[i] = ds_failed
         data["datasets"].append(dataset)
 
     data["metadata"]["total_files"] = total_files
     data["metadata"]["total_pages"] = total_pages
     data["metadata"]["total_size_mb"] = round(total_size, 2)
+    data["metadata"]["total_failed"] = total_failed
 
-    return data
+    return data, dataset_failures
 
 
 def create_search_index(data):
@@ -230,15 +229,10 @@ def save_json_files(data):
     """Save multiple JSON output formats to data/."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("\n" + "=" * 60)
-    print("Saving JSON files...")
-    print("=" * 60)
-
     files_created = []
 
     # 1. Full JSON
     full_path = DATA_DIR / JSON_FULL
-    print(f"Creating: {full_path}")
     with open(full_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     files_created.append(str(full_path))
@@ -246,7 +240,6 @@ def save_json_files(data):
         "file": str(full_path),
         "size_mb": round(full_path.stat().st_size / (1024 * 1024), 1),
     }})
-    print(f"  Size: {full_path.stat().st_size / (1024 * 1024):.1f} MB")
 
     # 2. Summary JSON (no full text)
     summary_data = json.loads(json.dumps(data))
@@ -260,7 +253,6 @@ def save_json_files(data):
                 del file_info["full_text"]
 
     summary_path = DATA_DIR / JSON_SUMMARY
-    print(f"Creating: {summary_path}")
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary_data, f, indent=2, ensure_ascii=False)
     files_created.append(str(summary_path))
@@ -268,12 +260,10 @@ def save_json_files(data):
         "file": str(summary_path),
         "size_mb": round(summary_path.stat().st_size / (1024 * 1024), 1),
     }})
-    print(f"  Size: {summary_path.stat().st_size / (1024 * 1024):.1f} MB")
 
     # 3. Search index (flat)
     search_index = create_search_index(data)
     search_path = DATA_DIR / JSON_SEARCH_INDEX
-    print(f"Creating: {search_path}")
     with open(search_path, "w", encoding="utf-8") as f:
         json.dump(search_index, f, indent=2, ensure_ascii=False)
     files_created.append(str(search_path))
@@ -281,7 +271,6 @@ def save_json_files(data):
         "file": str(search_path),
         "size_mb": round(search_path.stat().st_size / (1024 * 1024), 1),
     }})
-    print(f"  Size: {search_path.stat().st_size / (1024 * 1024):.1f} MB")
 
     # 4. File listing
     file_list = []
@@ -297,7 +286,6 @@ def save_json_files(data):
                 })
 
     list_path = DATA_DIR / JSON_FILE_LIST
-    print(f"Creating: {list_path}")
     with open(list_path, "w", encoding="utf-8") as f:
         json.dump(file_list, f, indent=2, ensure_ascii=False)
     files_created.append(str(list_path))
@@ -305,32 +293,23 @@ def save_json_files(data):
         "file": str(list_path),
         "size_mb": round(list_path.stat().st_size / (1024 * 1024), 1),
     }})
-    print(f"  Size: {list_path.stat().st_size / (1024 * 1024):.1f} MB")
 
     return files_created
 
 
-def print_summary(data):
+def print_summary(data, dataset_failures):
     """Print extraction summary."""
     print("\n" + "=" * 60)
     print("EXTRACTION SUMMARY")
     print("=" * 60)
-    print(f"\nTotal Datasets: {data['metadata']['total_datasets']}")
-    print(f"Total Files: {data['metadata']['total_files']}")
-    print(f"Total Pages: {data['metadata']['total_pages']}")
-    print(f"Total Size: {data['metadata']['total_size_mb']:.2f} MB")
-    print("\nBreakdown by Dataset:")
-    print("-" * 60)
-    print(f"{'Dataset':<12} {'Files':<8} {'Pages':<8} {'Size (MB)':<10}")
-    print("-" * 60)
-    for dataset in data["datasets"]:
-        print(
-            f"Data Set {dataset['dataset_number']:<3}  "
-            f"{dataset.get('file_count', 0):<8} "
-            f"{dataset.get('total_pages', 0):<8} "
-            f"{dataset.get('total_size_mb', 0):<10.2f}"
-        )
-    print("-" * 60)
+    print(f"\n  Files:    {data['metadata']['total_files']}")
+    print(f"  Pages:    {data['metadata']['total_pages']}")
+    print(f"  Size:     {data['metadata']['total_size_mb']:.2f} MB")
+    print(f"  Failed:   {data['metadata']['total_failed']}")
+    if dataset_failures:
+        print(f"\n  Failures by dataset:")
+        for ds, count in sorted(dataset_failures.items()):
+            print(f"    Data Set {ds}: {count} failed")
 
 
 def main():
@@ -349,12 +328,13 @@ def main():
         print("Install with: brew install poppler")
         sys.exit(1)
 
-    data = process_all_pdfs()
-    if data is None:
+    result = process_all_pdfs()
+    if result is None:
         print("Error: Could not process PDFs")
         sys.exit(1)
 
-    print_summary(data)
+    data, dataset_failures = result
+    print_summary(data, dataset_failures)
     files_created = save_json_files(data)
 
     logger.info("extraction_complete", extra={"data": {
@@ -364,17 +344,9 @@ def main():
         "files_created": len(files_created),
     }})
 
-    print("\n" + "=" * 60)
-    print("COMPLETE!")
+    print(f"\n  JSON files written: {len(files_created)}")
+    print(f"  Output: {DATA_DIR.resolve()}")
     print("=" * 60)
-    print("\nFiles created:")
-    for f in files_created:
-        print(f"  - {f}")
-
-    print("\nUsage:")
-    print("  python -m src.extractor   # Re-run extraction")
-    print("  python -m src.search      # CLI search")
-    print("  python -m src.server      # Start web interface")
 
 
 if __name__ == "__main__":
