@@ -329,9 +329,9 @@ def download_dataset(dataset_num, workers, batch_size, dry_run, browser_context)
                 links = fetch_page_links(page, base_url, page_num)
                 batch_links.update(links)
 
-                if page_num % 10 == 0 or page_num == batch_end - 1:
-                    print(f"    Scanned page {page_num}/{last_page}: "
-                          f"{len(links)} links (batch total: {len(batch_links)})")
+                if page_num == batch_end - 1:
+                    print(f"    Scanned {batch_label}: "
+                          f"{len(batch_links)} links found")
 
             batch_links = sorted(batch_links)
             total_links += len(batch_links)
@@ -345,8 +345,6 @@ def download_dataset(dataset_num, workers, batch_size, dry_run, browser_context)
                       f"(already downloaded: {existing})")
             else:
                 # Download this batch with thread pool
-                print(f"    Downloading {len(batch_links)} PDFs "
-                      f"with {workers} threads...")
                 dl, sk, fl = download_batch(
                     batch_links, dataset_dir, session, workers,
                 )
@@ -357,7 +355,6 @@ def download_dataset(dataset_num, workers, batch_size, dry_run, browser_context)
                     "dataset": dataset_num, "batch_label": batch_label,
                     "downloaded": dl, "skipped": sk, "failed": fl,
                 }})
-                print(f"    Batch done: {dl} downloaded, {sk} skipped, {fl} failed")
 
             # Clear batch from memory
             del batch_links
@@ -377,7 +374,7 @@ def download_dataset(dataset_num, workers, batch_size, dry_run, browser_context)
             print(f"    Skipped:         {total_skipped}")
             print(f"    Failed:          {total_failed}")
 
-        return total_links if dry_run else total_downloaded + total_skipped
+        return total_downloaded, total_skipped, total_failed
 
     finally:
         page.close()
@@ -457,29 +454,44 @@ def main():
             viewport={"width": 1920, "height": 1080},
         )
 
-        grand_total = 0
+        grand_downloaded = 0
+        grand_skipped = 0
+        grand_failed = 0
+        dataset_results = {}
         try:
             for dataset_num in datasets:
-                count = download_dataset(
+                dl, sk, fl = download_dataset(
                     dataset_num, args.workers, args.batch_size,
                     args.dry_run, context,
                 )
-                grand_total += count
+                grand_downloaded += dl
+                grand_skipped += sk
+                grand_failed += fl
+                dataset_results[dataset_num] = (dl, sk, fl)
                 time.sleep(1)
         finally:
             context.close()
             browser.close()
 
     logger.info("downloader_complete", extra={"data": {
-        "grand_total": grand_total, "dry_run": args.dry_run,
+        "downloaded": grand_downloaded, "skipped": grand_skipped,
+        "failed": grand_failed, "dry_run": args.dry_run,
     }})
 
     print(f"\n{'=' * 70}")
     if args.dry_run:
-        print(f"  Dry run complete. Total PDF links found: {grand_total}")
+        print(f"  Dry run complete.")
     else:
-        print(f"  Complete! Total PDFs processed: {grand_total}")
-        print(f"  Files saved in: {PDF_DIR.resolve()}")
+        print(f"  Complete!")
+        print(f"    Downloaded: {grand_downloaded}")
+        print(f"    Skipped:    {grand_skipped}")
+        print(f"    Failed:     {grand_failed}")
+        if grand_failed > 0:
+            print(f"\n  Failures by dataset:")
+            for ds, (dl, sk, fl) in sorted(dataset_results.items()):
+                if fl > 0:
+                    print(f"    Data Set {ds}: {fl} failed")
+        print(f"\n  Files saved in: {PDF_DIR.resolve()}")
     print(f"{'=' * 70}")
 
 
