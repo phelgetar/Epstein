@@ -438,6 +438,38 @@ async def classification_stats(dataset: Optional[int] = Query(None, ge=1, le=12)
     return result
 
 
+@app.get("/api/tags/autocomplete")
+async def tags_autocomplete(
+    q: str = Query("", description="Tag prefix to match"),
+    dataset: Optional[int] = Query(None, ge=1, le=12),
+    limit: int = Query(10, ge=1, le=100),
+):
+    """Return tags matching a prefix, sorted by frequency."""
+    datasets_to_query = [dataset] if dataset is not None else list(range(1, 13))
+    for ds in datasets_to_query:
+        _load_classifications(ds)
+
+    tag_counts = {}
+    for ds in datasets_to_query:
+        cls_data = _classifications.get(ds, {}).get("pages", {})
+        for cls in cls_data.values():
+            for t in cls.get("tags", []):
+                t_lower = t.lower()
+                tag_counts[t_lower] = tag_counts.get(t_lower, 0) + 1
+
+    q_lower = q.lower().strip()
+    if q_lower:
+        matching = {t: c for t, c in tag_counts.items() if q_lower in t}
+    else:
+        matching = tag_counts
+
+    sorted_tags = sorted(matching.items(), key=lambda x: -x[1])[:limit]
+
+    return {
+        "suggestions": [{"tag": t, "count": c} for t, c in sorted_tags],
+    }
+
+
 # ─── Logs API ────────────────────────────────────────────────
 
 @app.get("/api/logs")

@@ -606,6 +606,66 @@
             opacity: 1;
         }
 
+        /* Tag Autocomplete */
+        .tag-autocomplete {
+            position: relative;
+        }
+
+        .tag-autocomplete-input {
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            background: var(--paper);
+            color: var(--ink-dark);
+            width: 200px;
+            box-sizing: border-box;
+        }
+
+        .tag-autocomplete-input::placeholder {
+            color: var(--ink-light);
+        }
+
+        .tag-suggestions {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--paper);
+            border: 1px solid var(--border);
+            border-top: none;
+            max-height: 240px;
+            overflow-y: auto;
+            z-index: 100;
+        }
+
+        .tag-suggestions.open {
+            display: block;
+        }
+
+        .tag-suggestion {
+            padding: 0.4rem 0.75rem;
+            cursor: pointer;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .tag-suggestion:hover,
+        .tag-suggestion.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        .tag-suggestion-count {
+            opacity: 0.6;
+            font-size: 0.7rem;
+            margin-left: 1rem;
+        }
+
         /* Footer */
         footer {
             margin-top: 4rem;
@@ -703,9 +763,10 @@
 
                     <div class="control-group" id="tagFilterGroup" style="display:none;">
                         <label class="control-label">Tags</label>
-                        <select id="tagSelect" class="control-select">
-                            <option value="">Add tag...</option>
-                        </select>
+                        <div class="tag-autocomplete">
+                            <input type="text" id="tagInput" class="tag-autocomplete-input" placeholder="Search tags..." autocomplete="off">
+                            <div class="tag-suggestions" id="tagSuggestions"></div>
+                        </div>
                         <div class="filter-chips" id="tagChips"></div>
                     </div>
 
@@ -788,7 +849,8 @@
         const columnValue = document.getElementById('columnValue');
         const rowsSelect = document.getElementById('rowsSelect');
         const contentTypeSelect = document.getElementById('contentTypeSelect');
-        const tagSelect = document.getElementById('tagSelect');
+        const tagInput = document.getElementById('tagInput');
+        const tagSuggestions = document.getElementById('tagSuggestions');
         const personSelect = document.getElementById('personSelect');
         const grid = document.getElementById('galleryGrid');
 
@@ -797,6 +859,8 @@
             currentDataset = val === 'all' ? 'all' : parseInt(val);
             selectedTags = [];
             renderTagChips();
+            tagInput.value = '';
+            closeTagSuggestions();
             viewPage = 1;
             _lastStatsDataset = null;  // force stats reload
             loadPage();
@@ -820,17 +884,103 @@
             loadPage();
         });
         let selectedTags = [];  // multi-tag selection state
+        let acHighlight = -1;   // autocomplete highlight index
+        let acDebounce = null;  // autocomplete debounce timer
 
-        tagSelect.addEventListener('change', () => {
-            const val = tagSelect.value;
-            if (val && !selectedTags.includes(val)) {
-                selectedTags.push(val);
+        tagInput.addEventListener('input', () => {
+            clearTimeout(acDebounce);
+            const q = tagInput.value.trim();
+            if (!q) {
+                closeTagSuggestions();
+                return;
+            }
+            acDebounce = setTimeout(() => fetchTagSuggestions(q), 200);
+        });
+
+        tagInput.addEventListener('keydown', (e) => {
+            const items = tagSuggestions.querySelectorAll('.tag-suggestion');
+            if (!items.length || !tagSuggestions.classList.contains('open')) {
+                if (e.key === 'Escape') { tagInput.blur(); }
+                return;
+            }
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                acHighlight = Math.min(acHighlight + 1, items.length - 1);
+                updateAcHighlight(items);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                acHighlight = Math.max(acHighlight - 1, 0);
+                updateAcHighlight(items);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (acHighlight >= 0 && acHighlight < items.length) {
+                    selectTagSuggestion(items[acHighlight].dataset.tag);
+                }
+            } else if (e.key === 'Escape') {
+                closeTagSuggestions();
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.tag-autocomplete')) {
+                closeTagSuggestions();
+            }
+        });
+
+        async function fetchTagSuggestions(q) {
+            try {
+                let url = `/api/tags/autocomplete?q=${encodeURIComponent(q)}&limit=15`;
+                if (currentDataset !== 'all') {
+                    url += `&dataset=${currentDataset}`;
+                }
+                const resp = await fetch(url);
+                const data = await resp.json();
+                const filtered = data.suggestions.filter(s => !selectedTags.includes(s.tag));
+                if (filtered.length === 0) {
+                    closeTagSuggestions();
+                    return;
+                }
+                acHighlight = -1;
+                tagSuggestions.innerHTML = filtered.map(s =>
+                    `<div class="tag-suggestion" data-tag="${escapeHtml(s.tag)}">`
+                    + `<span>${escapeHtml(s.tag)}</span>`
+                    + `<span class="tag-suggestion-count">${s.count.toLocaleString()}</span>`
+                    + `</div>`
+                ).join('');
+                tagSuggestions.classList.add('open');
+
+                tagSuggestions.querySelectorAll('.tag-suggestion').forEach(el => {
+                    el.addEventListener('click', () => selectTagSuggestion(el.dataset.tag));
+                });
+            } catch (e) {
+                closeTagSuggestions();
+            }
+        }
+
+        function selectTagSuggestion(tag) {
+            if (tag && !selectedTags.includes(tag)) {
+                selectedTags.push(tag);
                 renderTagChips();
                 viewPage = 1;
                 loadPage();
             }
-            tagSelect.value = '';  // reset to "Add tag..."
-        });
+            tagInput.value = '';
+            closeTagSuggestions();
+        }
+
+        function closeTagSuggestions() {
+            tagSuggestions.classList.remove('open');
+            tagSuggestions.innerHTML = '';
+            acHighlight = -1;
+        }
+
+        function updateAcHighlight(items) {
+            items.forEach((el, i) => {
+                el.classList.toggle('active', i === acHighlight);
+            });
+            if (acHighlight >= 0) items[acHighlight].scrollIntoView({ block: 'nearest' });
+        }
+
         personSelect.addEventListener('change', () => {
             viewPage = 1;
             loadPage();
@@ -900,16 +1050,7 @@
                     contentTypeSelect.value = savedCt;
                     document.getElementById('typeFilterGroup').style.display = '';
 
-                    // Tag dropdown
-                    const savedTag = tagSelect.value;
-                    tagSelect.innerHTML = '<option value="">Add tag...</option>';
-                    for (const tag of data.top_tags) {
-                        const opt = document.createElement('option');
-                        opt.value = tag;
-                        opt.textContent = tag;
-                        tagSelect.appendChild(opt);
-                    }
-                    tagSelect.value = savedTag;
+                    // Tag autocomplete
                     document.getElementById('tagFilterGroup').style.display = '';
 
                     // Person dropdown
