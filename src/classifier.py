@@ -368,10 +368,27 @@ def main():
 
     start_time = time.time()
 
+    print("=" * 70)
+    print("Epstein DOJ Files — Image Classifier")
+    print("=" * 70)
+    print(f"  Model:      {CLASSIFY_MODEL}")
+    print(f"  Datasets:   {', '.join(str(d) for d in datasets)}")
+    print(f"  Workers:    {args.workers}")
+    print(f"  Rate limit: {args.rpm} RPM")
+    print(f"  Output:     {CLASSIFY_DIR.resolve()}")
+    if args.max_cost:
+        print(f"  Cost cap:   ${args.max_cost:.2f}")
+    if args.force:
+        print("  Mode:       FORCE (reclassifying all)")
+    if args.dry_run:
+        print("  Mode:       DRY RUN (no API calls)")
+    print()
+
     logger.info("classifier_started", extra={"data": {
         "model": CLASSIFY_MODEL, "datasets": datasets, "workers": args.workers,
         "rpm": args.rpm, "force": args.force, "dry_run": args.dry_run,
         "max_cost": args.max_cost,
+        "output_dir": str(CLASSIFY_DIR.resolve()),
     }})
 
     # Initialize client
@@ -421,6 +438,7 @@ def main():
         "classified": grand_classified, "skipped": grand_skipped,
         "failed": grand_failed, "total_tokens": cost_state["total_tokens"],
         "est_cost": round(est_cost, 4), "elapsed_s": round(elapsed, 1),
+        "dataset_failures": dataset_failures,
     }})
 
     print(f"\n{'=' * 70}")

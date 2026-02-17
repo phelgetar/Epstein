@@ -175,9 +175,22 @@ def main():
 
     start_time = time.time()
 
+    print("=" * 70)
+    print("Epstein DOJ Files — Thumbnail Generator")
+    print("=" * 70)
+    print(f"  Datasets:   {', '.join(str(d) for d in datasets)}")
+    print(f"  Workers:    {args.workers}")
+    print(f"  Width:      {args.width}px")
+    print(f"  Quality:    {args.quality}")
+    print(f"  Output:     {THUMB_DIR.resolve()}")
+    if args.force:
+        print("  Mode:       FORCE (regenerating all)")
+    print()
+
     logger.info("thumbnails_started", extra={"data": {
         "datasets": datasets, "workers": args.workers,
         "width": args.width, "quality": args.quality, "force": args.force,
+        "output_dir": str(THUMB_DIR.resolve()),
     }})
 
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
@@ -202,6 +215,7 @@ def main():
     logger.info("thumbnails_complete", extra={"data": {
         "generated": grand_generated, "skipped": grand_skipped,
         "failed": grand_failed, "elapsed_s": round(elapsed, 1),
+        "dataset_failures": dataset_failures,
     }})
 
     print(f"\n{'=' * 70}")

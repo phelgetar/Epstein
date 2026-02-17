@@ -431,6 +431,8 @@ def main():
         "datasets": datasets, "workers": args.workers,
         "batch_size": args.batch_size, "dry_run": args.dry_run,
         "headless": args.headless,
+        "browser": "headless" if args.headless else "headed",
+        "output_dir": str(PDF_DIR.resolve()),
     }})
 
     print("=" * 70)
@@ -476,6 +478,7 @@ def main():
     logger.info("downloader_complete", extra={"data": {
         "downloaded": grand_downloaded, "skipped": grand_skipped,
         "failed": grand_failed, "dry_run": args.dry_run,
+        "dataset_failures": dataset_failures,
     }})
 
     print(f"\n{'=' * 70}")

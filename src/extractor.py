@@ -316,9 +316,19 @@ def main():
     from src.logging_setup import setup_logging
     setup_logging()
 
-    print("Epstein DOJ Files - PDF to JSON Converter")
     print("=" * 60)
+    print("Epstein DOJ Files — PDF Extractor")
+    print("=" * 60)
+    print(f"  Datasets:   1-{NUM_DATASETS}")
+    print(f"  Tool:       pdftotext/pdfinfo (Poppler)")
+    print(f"  Output:     {DATA_DIR.resolve()}")
     print()
+
+    logger.info("extractor_started", extra={"data": {
+        "datasets": list(range(1, NUM_DATASETS + 1)),
+        "tool": "pdftotext/pdfinfo",
+        "output_dir": str(DATA_DIR.resolve()),
+    }})
 
     # Check for required tools
     try:
@@ -341,6 +351,8 @@ def main():
         "total_files": data["metadata"]["total_files"],
         "total_pages": data["metadata"]["total_pages"],
         "total_size_mb": data["metadata"]["total_size_mb"],
+        "total_failed": data["metadata"]["total_failed"],
+        "dataset_failures": dataset_failures,
         "files_created": len(files_created),
     }})
 
