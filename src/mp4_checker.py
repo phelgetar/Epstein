@@ -67,10 +67,13 @@ def check_and_download_mp4(pdf_url, dataset_dir, session):
         return mp4_url, "skip", None
 
     try:
-        # HEAD request to check existence without downloading the whole file
-        head = session.head(mp4_url, timeout=30, allow_redirects=True)
+        # Use GET with Range header to check existence (Akamai blocks HEAD)
+        probe = session.get(mp4_url, timeout=30, allow_redirects=True,
+                            headers={"Range": "bytes=0-0"}, stream=True)
+        probe.close()
 
-        if head.status_code != 200:
+        # 200 = full response, 206 = partial content (Range accepted)
+        if probe.status_code not in (200, 206):
             return mp4_url, "not_found", None
 
         # MP4 exists — download it (10 min timeout for large videos)
@@ -131,7 +134,7 @@ def check_batch(pdf_urls, dataset_dir, session, workers, dry_run):
                     skipped += 1
                     found += 1
                     continue
-                future = pool.submit(_head_check, mp4_url, session)
+                future = pool.submit(_probe_check, mp4_url, session)
                 futures[future] = mp4_url
 
             for future in as_completed(futures):
@@ -166,11 +169,16 @@ def check_batch(pdf_urls, dataset_dir, session, workers, dry_run):
     return found, downloaded, skipped, failed
 
 
-def _head_check(mp4_url, session):
-    """HEAD request to check if an MP4 exists. Returns bool."""
+def _probe_check(mp4_url, session):
+    """GET with Range header to check if an MP4 exists. Returns bool.
+
+    Uses Range: bytes=0-0 instead of HEAD because Akamai blocks HEAD requests.
+    """
     try:
-        resp = session.head(mp4_url, timeout=30, allow_redirects=True)
-        return resp.status_code == 200
+        resp = session.get(mp4_url, timeout=30, allow_redirects=True,
+                           headers={"Range": "bytes=0-0"}, stream=True)
+        resp.close()
+        return resp.status_code in (200, 206)
     except Exception:
         return False
 
@@ -198,7 +206,34 @@ def check_dataset(dataset_num, workers, batch_size, dry_run, browser_context):
         time.sleep(2)
         handle_barriers(page)
 
+        # Pagination discovery with retry — barriers or slow load can
+        # cause get_last_page_from_browser to return 0 (only 1 page).
+        # Re-navigate to ensure pagination is fully loaded.
         last_page = get_last_page_from_browser(page)
+        if last_page == 0:
+            print("  Pagination not found, re-navigating...")
+            page.goto(base_url, wait_until="networkidle", timeout=30000)
+            time.sleep(3)
+            handle_barriers(page)
+            # Wait explicitly for pagination nav to appear
+            try:
+                page.wait_for_selector(
+                    "nav[aria-label='Pagination'] a[href*='page=']",
+                    timeout=10000,
+                )
+            except PwTimeout:
+                pass
+            last_page = get_last_page_from_browser(page)
+
+        if last_page == 0:
+            # One more attempt — navigate to page=1 then back to page=0
+            # to force Drupal to render pagination
+            print("  Still no pagination, trying page=1...")
+            page.goto(f"{base_url}?page=1", wait_until="networkidle", timeout=30000)
+            time.sleep(2)
+            handle_barriers(page)
+            last_page = get_last_page_from_browser(page)
+
         total_pages = last_page + 1
         logger.info("mp4_check_pagination", extra={"data": {
             "dataset": dataset_num, "total_pages": total_pages,
