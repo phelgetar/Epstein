@@ -20,6 +20,7 @@ PORT_RANGE = range(8000, 8100)
 
 # Data source
 SOURCE_URL = "https://www.justice.gov/epstein/doj-disclosures"
+SEARCH_URL = "https://www.justice.gov/epstein/search"
 NUM_DATASETS = 12
 
 # JSON output filenames (stored in DATA_DIR)
@@ -29,12 +30,17 @@ JSON_SUMMARY = "epstein_pdfs_summary.json"
 JSON_FILE_LIST = "epstein_pdfs_file_list.json"
 
 # Allowed file extensions the server may serve
-ALLOWED_EXTENSIONS = {".html", ".json", ".pdf", ".css", ".js", ".png", ".jpg", ".ico"}
+ALLOWED_EXTENSIONS = {".html", ".json", ".pdf", ".css", ".js", ".png", ".jpg", ".ico", ".mp4"}
 
 # Download settings
 DOWNLOAD_WORKERS = 10      # Concurrent PDF download threads
 DOWNLOAD_BATCH_SIZE = 10   # Pages to scan before downloading (memory management)
 PAGE_FETCH_DELAY = 2.0     # Seconds between page requests (Akamai rate limiting)
+
+# Video download settings
+VIDEO_DIR = PDF_DIR / "videos"
+VIDEO_DOWNLOAD_WORKERS = 10
+VIDEO_BATCH_SIZE = 10
 
 # Thumbnail settings
 THUMB_DIR = DATA_DIR / "thumbnails"
