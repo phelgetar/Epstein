@@ -13,6 +13,7 @@ Usage:
     python -m src.mp4_checker --dataset 8        # Dataset 8 only
     python -m src.mp4_checker --dataset 8 9 10   # Explicit datasets
     python -m src.mp4_checker --workers 5        # Concurrent threads
+    python -m src.mp4_checker --delay 1          # 1s between probe requests
     python -m src.mp4_checker --dry-run          # Check without downloading
 """
 
@@ -47,7 +48,7 @@ DEFAULT_DATASETS = [8, 9, 10]
 
 # ─── MP4 Check & Download ────────────────────────────────────
 
-def check_and_download_mp4(pdf_url, dataset_dir, session):
+def check_and_download_mp4(pdf_url, dataset_dir, session, delay=0):
     """Check if an .mp4 version of a PDF URL exists; download if so.
 
     Returns (mp4_url, status, message) where status is one of:
@@ -67,6 +68,9 @@ def check_and_download_mp4(pdf_url, dataset_dir, session):
         return mp4_url, "skip", None
 
     try:
+        if delay > 0:
+            time.sleep(delay)
+
         # Use GET with Range header to check existence (Akamai blocks HEAD)
         probe = session.get(mp4_url, timeout=30, allow_redirects=True,
                             headers={"Range": "bytes=0-0"}, stream=True)
@@ -110,7 +114,7 @@ def check_and_download_mp4(pdf_url, dataset_dir, session):
         return mp4_url, "error", f"  Error: {mp4_filename} — {e}"
 
 
-def check_batch(pdf_urls, dataset_dir, session, workers, dry_run):
+def check_batch(pdf_urls, dataset_dir, session, workers, dry_run, delay=0):
     """Check a batch of PDF URLs for .mp4 companions.
 
     Returns (found, downloaded, skipped, failed) counts.
@@ -134,7 +138,7 @@ def check_batch(pdf_urls, dataset_dir, session, workers, dry_run):
                     skipped += 1
                     found += 1
                     continue
-                future = pool.submit(_probe_check, mp4_url, session)
+                future = pool.submit(_probe_check, mp4_url, session, delay)
                 futures[future] = mp4_url
 
             for future in as_completed(futures):
@@ -148,7 +152,7 @@ def check_batch(pdf_urls, dataset_dir, session, workers, dry_run):
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {}
         for url in pdf_urls:
-            future = pool.submit(check_and_download_mp4, url, dataset_dir, session)
+            future = pool.submit(check_and_download_mp4, url, dataset_dir, session, delay)
             futures[future] = url
 
         for future in as_completed(futures):
@@ -169,12 +173,14 @@ def check_batch(pdf_urls, dataset_dir, session, workers, dry_run):
     return found, downloaded, skipped, failed
 
 
-def _probe_check(mp4_url, session):
+def _probe_check(mp4_url, session, delay=0):
     """GET with Range header to check if an MP4 exists. Returns bool.
 
     Uses Range: bytes=0-0 instead of HEAD because Akamai blocks HEAD requests.
     """
     try:
+        if delay > 0:
+            time.sleep(delay)
         resp = session.get(mp4_url, timeout=30, allow_redirects=True,
                            headers={"Range": "bytes=0-0"}, stream=True)
         resp.close()
@@ -185,7 +191,7 @@ def _probe_check(mp4_url, session):
 
 # ─── Per-Dataset Processing ───────────────────────────────────
 
-def check_dataset(dataset_num, workers, batch_size, dry_run, browser_context):
+def check_dataset(dataset_num, workers, batch_size, dry_run, delay, browser_context):
     """Scan a dataset's pages for PDF URLs and check for .mp4 companions."""
     print(f"\n{'=' * 70}")
     print(f"  Data Set {dataset_num}")
@@ -292,7 +298,7 @@ def check_dataset(dataset_num, workers, batch_size, dry_run, browser_context):
             # Check each PDF URL for a .mp4 companion
             print(f"    Checking {len(batch_links)} URLs for .mp4 companions...")
             fo, dl, sk, fl = check_batch(
-                batch_links, dataset_dir, session, workers, dry_run,
+                batch_links, dataset_dir, session, workers, dry_run, delay,
             )
             total_found += fo
             total_downloaded += dl
@@ -332,6 +338,7 @@ def main():
                "  python -m src.mp4_checker --dataset 8       # Dataset 8 only\n"
                "  python -m src.mp4_checker --dataset 8 9 10  # Explicit datasets\n"
                "  python -m src.mp4_checker --workers 5       # 5 concurrent threads\n"
+               "  python -m src.mp4_checker --delay 1         # 1s between probe requests\n"
                "  python -m src.mp4_checker --dry-run         # Check without downloading\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -352,6 +359,10 @@ def main():
         help="Check for .mp4 files without downloading",
     )
     parser.add_argument(
+        "--delay", type=float, default=0,
+        help="Seconds to wait between each MP4 probe request (default: 0)",
+    )
+    parser.add_argument(
         "--headless", action="store_true",
         help="Run browser in headless mode (may be blocked by Akamai)",
     )
@@ -369,6 +380,8 @@ def main():
     print(f"  Workers:    {args.workers}")
     print(f"  Batch size: {args.batch_size} pages")
     print(f"  Browser:    {'headless' if args.headless else 'headed'}")
+    if args.delay > 0:
+        print(f"  Delay:      {args.delay}s between probes")
     if args.dry_run:
         print("  Mode:       DRY RUN (check only)")
     print()
@@ -376,7 +389,7 @@ def main():
     logger.info("mp4_checker_started", extra={"data": {
         "datasets": args.dataset, "workers": args.workers,
         "batch_size": args.batch_size, "dry_run": args.dry_run,
-        "headless": args.headless,
+        "headless": args.headless, "delay": args.delay,
     }})
 
     with sync_playwright() as pw:
@@ -395,7 +408,7 @@ def main():
             for dataset_num in args.dataset:
                 fo, dl, sk, fl = check_dataset(
                     dataset_num, args.workers, args.batch_size,
-                    args.dry_run, context,
+                    args.dry_run, args.delay, context,
                 )
                 grand_found += fo
                 grand_downloaded += dl
