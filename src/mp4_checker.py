@@ -73,10 +73,10 @@ def check_and_download_mp4(pdf_url, dataset_dir, session):
         if head.status_code != 200:
             return mp4_url, "not_found", None
 
-        # MP4 exists — download it
-        resp = session.get(mp4_url, timeout=300, stream=True)
+        # MP4 exists — download it (10 min timeout for large videos)
+        resp = session.get(mp4_url, timeout=600, stream=True)
         if resp.status_code != 200:
-            logger.error("mp4_download_http_error", extra={"data": {
+            logger.info("mp4_download_http_error", extra={"data": {
                 "url": mp4_url, "status_code": resp.status_code,
             }})
             return mp4_url, "error", f"  HTTP {resp.status_code}: {mp4_filename}"
@@ -96,14 +96,14 @@ def check_and_download_mp4(pdf_url, dataset_dir, session):
         return mp4_url, "downloaded", f"  Downloaded: {mp4_filename} ({size:,} bytes)"
 
     except requests.exceptions.Timeout:
-        logger.error("mp4_download_timeout", extra={"data": {
+        logger.info("mp4_download_timeout", extra={"data": {
             "url": mp4_url, "filename": mp4_filename,
         }})
         return mp4_url, "error", f"  Timeout: {mp4_filename}"
     except Exception as e:
-        logger.error("mp4_download_error", extra={"data": {
-            "url": mp4_url, "filename": mp4_filename,
-        }}, exc_info=True)
+        logger.info("mp4_download_error", extra={"data": {
+            "url": mp4_url, "filename": mp4_filename, "error": str(e),
+        }})
         return mp4_url, "error", f"  Error: {mp4_filename} — {e}"
 
 
