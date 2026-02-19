@@ -70,13 +70,7 @@ def check_and_download_mp4(pdf_url, dataset_dir, session):
         # HEAD request to check existence without downloading the whole file
         head = session.head(mp4_url, timeout=30, allow_redirects=True)
 
-        if head.status_code == 404:
-            return mp4_url, "not_found", None
-
         if head.status_code != 200:
-            logger.warning("mp4_check_http_error", extra={"data": {
-                "url": mp4_url, "status_code": head.status_code,
-            }})
             return mp4_url, "not_found", None
 
         # MP4 exists — download it
@@ -232,17 +226,33 @@ def check_dataset(dataset_num, workers, batch_size, dry_run, browser_context):
 
             # Scan pages for PDF links
             batch_links = set()
+            empty_streak = 0
             for page_num in range(batch_start, batch_end):
                 if page_num > 0:
                     time.sleep(PAGE_FETCH_DELAY)
                 links = fetch_page_links(page, base_url, page_num)
+
+                if not links:
+                    empty_streak += 1
+                    # Re-handle barriers if we get consecutive empty pages
+                    if empty_streak == 3:
+                        handle_barriers(page)
+                        # Retry current page
+                        links = fetch_page_links(page, base_url, page_num)
+                else:
+                    empty_streak = 0
+
                 batch_links.update(links)
 
-                if page_num == batch_end - 1:
+                if page_num == batch_end - 1 and batch_links:
                     print(f"    Scanned {batch_label}: "
                           f"{len(batch_links)} PDF links")
 
             batch_links = sorted(batch_links)
+
+            if not batch_links:
+                del batch_links
+                continue
 
             # Check each PDF URL for a .mp4 companion
             print(f"    Checking {len(batch_links)} URLs for .mp4 companions...")
