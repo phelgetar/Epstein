@@ -5,10 +5,12 @@ Tools for downloading, extracting, searching, and browsing the publicly released
 ## Features
 
 - **Downloader** — Playwright-based PDF downloader with stealth patches to bypass Akamai CDN, batched pagination, and multithreaded downloads
+- **Video Downloader** — Downloads video files from the DOJ search page, saving as `.mp4`
+- **MP4 Checker** — Scans existing PDF datasets for corresponding `.mp4` companion files on the server
 - **Extractor** — Converts downloaded PDFs to searchable JSON using Poppler (`pdftotext`/`pdfinfo`), with page-level offsets
 - **Thumbnails** — Batch JPEG thumbnail generator for all PDF pages using PyMuPDF
-- **Classifier** — AI image classification using OpenAI GPT-4o for tagging and person recognition
-- **CLI Search** — Full-text search with AND/OR operators, regex support, and page number references
+- **Classifier** — AI image classification using Google Gemini 2.0 Flash for tagging and person recognition
+- **CLI Search** — Full-text search with AND/OR/NOT operators, NEAR/N proximity, quoted phrases, and page references
 - **Web Interface** — Browser-based search UI with highlighted results and inline PDF viewing
 - **Gallery** — Thumbnail gallery with lightbox viewer, tag autocomplete, content type and person filtering
 - **Log Viewer** — Searchable structured log viewer with level/module filtering
@@ -29,7 +31,7 @@ sudo apt install poppler-utils
 # Python dependencies
 pip install -r requirements.txt
 # or manually:
-pip install fastapi uvicorn watchdog playwright playwright-stealth requests pymupdf python-dotenv sentry-sdk openai
+pip install fastapi uvicorn watchdog playwright playwright-stealth requests pymupdf google-genai pydantic sentry-sdk
 
 # Install Playwright browsers
 playwright install chromium
@@ -51,7 +53,32 @@ python -m src.downloader --headless          # Headless mode (page 0 only)
 
 Downloads PDFs from justice.gov into `epstein_doj_files/data-set-N/`. Output shows only errors and actual downloads; the summary includes per-dataset failure counts.
 
-### 2. Extract text to JSON
+### 2. Download Videos
+
+```bash
+python -m src.video_downloader                                # Download all (default query)
+python -m src.video_downloader --query "No Images Produced"   # Custom search query
+python -m src.video_downloader --workers 10                   # Concurrent threads
+python -m src.video_downloader --batch-size 20                # Pages per batch
+python -m src.video_downloader --dry-run                      # Count only
+```
+
+Searches the DOJ search page for video files linked as `.pdf`, downloads them, and saves as `.mp4` in `epstein_doj_files/videos/`.
+
+### 3. Check for MP4 Companions
+
+```bash
+python -m src.mp4_checker                    # Check datasets 8, 9, 10
+python -m src.mp4_checker --dataset 8        # Dataset 8 only
+python -m src.mp4_checker --dataset 8 9 10   # Explicit datasets
+python -m src.mp4_checker --workers 5        # Concurrent threads
+python -m src.mp4_checker --delay 1          # 1s between probe requests
+python -m src.mp4_checker --dry-run          # Check without downloading
+```
+
+Scans dataset pages for PDF URLs and checks whether a corresponding `.mp4` version exists on the DOJ server. Downloads any found into the dataset directory alongside the PDFs.
+
+### 4. Extract text to JSON
 
 ```bash
 python -m src.extractor
@@ -59,7 +86,7 @@ python -m src.extractor
 
 Processes all PDFs and creates searchable JSON files in `data/`. Only errors are printed during extraction; the summary shows total files, pages, size, and per-dataset failures.
 
-### 3. Generate thumbnails
+### 5. Generate thumbnails
 
 ```bash
 python -m src.thumbnails                     # All datasets
@@ -72,17 +99,22 @@ python -m src.thumbnails --force             # Regenerate existing
 
 Renders every page of every PDF as a JPEG thumbnail into `data/thumbnails/`. Only errors are printed; the summary includes per-dataset failure counts.
 
-### 4. Classify images (optional)
+### 6. Classify images (optional)
 
 ```bash
 python -m src.classifier                     # All datasets
 python -m src.classifier --dataset 1         # Dataset 1 only
-python -m src.classifier --cost-cap 5.00     # Max spend in USD
+python -m src.classifier --dataset 1,3,7-11  # Ranges and lists
+python -m src.classifier --workers 10        # Concurrent API calls
+python -m src.classifier --rpm 2000          # Rate limit (requests/min)
+python -m src.classifier --max-cost 50       # Stop after $50 spent
+python -m src.classifier --force             # Reclassify existing
+python -m src.classifier --dry-run           # Count and estimate cost
 ```
 
-Uses OpenAI GPT-4o to tag thumbnail images with content type, tags, and recognized people. Requires `OPENAI_API_KEY` environment variable.
+Uses Google Gemini 2.0 Flash to classify thumbnail images with description, tags, content type, and recognized people. Requires `GOOGLE_API_KEY` environment variable. Results stored in `data/classifications/data-set-N.json`.
 
-### 5. Search
+### 7. Search
 
 **Web interface:**
 
@@ -90,7 +122,7 @@ Uses OpenAI GPT-4o to tag thumbnail images with content type, tags, and recogniz
 python -m src.server
 ```
 
-Opens at `http://127.0.0.1:8000`. The server auto-reloads when source files change. Pages available:
+Opens at `http://localhost:8000`. The server auto-reloads when source files change. Pages available:
 
 - **Search** — Full-text search with highlighted results and inline PDF viewer
 - **Gallery** — Thumbnail browser with tag autocomplete, content type, and person filters
@@ -99,10 +131,16 @@ Opens at `http://127.0.0.1:8000`. The server auto-reloads when source files chan
 **Command line:**
 
 ```bash
-python -m src.search "query"           # single term
-python -m src.search "term1 AND term2" # both terms
-python -m src.search "term1 OR term2"  # either term
-python -m src.search                   # interactive mode
+python -m src.search "Maxwell"                   # Single term
+python -m src.search "Maxwell AND island"        # Both terms
+python -m src.search "Maxwell OR Epstein"        # Either term
+python -m src.search "Maxwell NOT flight"        # Exclusion
+python -m src.search '"grand jury"'              # Quoted phrase
+python -m src.search "Epstein NEAR/5 island"     # Proximity search
+python -m src.search "Maxwell" --dataset 1       # Filter by dataset
+python -m src.search "Maxwell" --sort relevance  # Sort results
+python -m src.search "Epstein" --export csv      # Export as CSV/JSON
+python -m src.search                             # Interactive mode
 ```
 
 ## Project Structure
@@ -111,11 +149,13 @@ python -m src.search                   # interactive mode
 src/
   config.py            — Centralized paths, ports, and settings
   downloader.py        — Playwright-based PDF downloader
+  video_downloader.py  — Video downloader from DOJ search page
+  mp4_checker.py       — MP4 companion file checker/downloader
   extractor.py         — PDF to JSON converter (Poppler)
   extractor_plumber.py — Alternative extractor using pdfplumber
-  classifier.py        — AI image classification (OpenAI GPT-4o)
+  classifier.py        — AI image classification (Gemini Flash)
   thumbnails.py        — Batch PDF thumbnail generator (PyMuPDF)
-  search.py            — CLI search with AND/OR and page references
+  search.py            — CLI search with AND/OR/NOT/NEAR and page references
   server.py            — FastAPI server with security headers and auto-reload
   logging_setup.py     — Structured JSONL logging configuration
 static/
@@ -127,22 +167,21 @@ scripts/
   start.bat            — Shell launcher (Windows)
 docs/                  — Documentation guides
 data/                  — Generated JSON, thumbnails, classifications, logs (gitignored)
-epstein_doj_files/     — Downloaded PDFs (gitignored)
+epstein_doj_files/     — Downloaded PDFs and videos (gitignored)
 ```
 
 ## Logging
 
-All modules log to `data/logs/app.jsonl` in structured JSON Lines format. Logs include timestamps, levels, module names, and contextual data. The log file rotates at 50 MB with 5 backups. View logs via the web interface at `/logs.html` or search the JSONL file directly.
+All modules log to `data/logs/app.jsonl` in structured JSON Lines format. Logs include timestamps, levels, module names, and contextual data. Each tool logs `_started` and `_complete` lifecycle events with run configuration and results. The log file rotates at 50 MB with 5 backups. View logs via the web interface at `/logs.html` or search the JSONL file directly.
 
 ## Security
 
 The local server includes several hardening measures:
 
-- Binds to 127.0.0.1 only
 - CORS restricted to localhost and private network origins
 - Content-Security-Policy, X-Frame-Options, X-Content-Type-Options headers
 - Path traversal protection (realpath validation)
-- File extension allowlist
+- File extension allowlist (`.html`, `.json`, `.pdf`, `.css`, `.js`, `.png`, `.jpg`, `.ico`, `.mp4`)
 - Sentry error tracking (optional, via `SENTRY_DSN` env var)
 
 ## License
