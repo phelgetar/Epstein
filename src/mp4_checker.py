@@ -48,7 +48,8 @@ DEFAULT_DATASETS = [8, 9, 10]
 
 # ─── MP4 Check & Download ────────────────────────────────────
 
-def check_and_download_mp4(pdf_url, dataset_dir, session, delay=0):
+def check_and_download_mp4(pdf_url, dataset_dir, session, delay=0,
+                           verbose=False):
     """Check if an .mp4 version of a PDF URL exists; download if so.
 
     Returns (mp4_url, status, message) where status is one of:
@@ -75,6 +76,9 @@ def check_and_download_mp4(pdf_url, dataset_dir, session, delay=0):
         probe = session.get(mp4_url, timeout=30, allow_redirects=True,
                             headers={"Range": "bytes=0-0"}, stream=True)
         probe.close()
+
+        if verbose:
+            print(f"    Probe {mp4_filename}: HTTP {probe.status_code}")
 
         # 200 = full response, 206 = partial content (Range accepted)
         if probe.status_code not in (200, 206):
@@ -114,7 +118,8 @@ def check_and_download_mp4(pdf_url, dataset_dir, session, delay=0):
         return mp4_url, "error", f"  Error: {mp4_filename} — {e}"
 
 
-def check_batch(pdf_urls, dataset_dir, session, workers, dry_run, delay=0):
+def check_batch(pdf_urls, dataset_dir, session, workers, dry_run, delay=0,
+                verbose=False):
     """Check a batch of PDF URLs for .mp4 companions.
 
     Returns (found, downloaded, skipped, failed) counts.
@@ -152,7 +157,8 @@ def check_batch(pdf_urls, dataset_dir, session, workers, dry_run, delay=0):
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {}
         for url in pdf_urls:
-            future = pool.submit(check_and_download_mp4, url, dataset_dir, session, delay)
+            future = pool.submit(check_and_download_mp4, url, dataset_dir, session,
+                                 delay, verbose)
             futures[future] = url
 
         for future in as_completed(futures):
@@ -191,7 +197,8 @@ def _probe_check(mp4_url, session, delay=0):
 
 # ─── Per-Dataset Processing ───────────────────────────────────
 
-def check_dataset(dataset_num, workers, batch_size, dry_run, delay, browser_context):
+def check_dataset(dataset_num, workers, batch_size, dry_run, delay, verbose,
+                   browser_context):
     """Scan a dataset's pages for PDF URLs and check for .mp4 companions."""
     print(f"\n{'=' * 70}")
     print(f"  Data Set {dataset_num}")
@@ -297,8 +304,18 @@ def check_dataset(dataset_num, workers, batch_size, dry_run, delay, browser_cont
 
             # Check each PDF URL for a .mp4 companion
             print(f"    Checking {len(batch_links)} URLs for .mp4 companions...")
+
+            if verbose and batch_start == 0:
+                # Show sample URL mappings for the first batch
+                for sample_url in batch_links[:3]:
+                    mp4_sample = re.sub(r'\.pdf(\?.*)?$', '.mp4', sample_url,
+                                        flags=re.IGNORECASE)
+                    print(f"    Sample PDF: {sample_url}")
+                    print(f"    Sample MP4: {mp4_sample}")
+
             fo, dl, sk, fl = check_batch(
                 batch_links, dataset_dir, session, workers, dry_run, delay,
+                verbose,
             )
             total_found += fo
             total_downloaded += dl
@@ -363,6 +380,10 @@ def main():
         help="Seconds to wait between each MP4 probe request (default: 0)",
     )
     parser.add_argument(
+        "--verbose", action="store_true",
+        help="Print sample URLs and probe response codes for debugging",
+    )
+    parser.add_argument(
         "--headless", action="store_true",
         help="Run browser in headless mode (may be blocked by Akamai)",
     )
@@ -408,7 +429,7 @@ def main():
             for dataset_num in args.dataset:
                 fo, dl, sk, fl = check_dataset(
                     dataset_num, args.workers, args.batch_size,
-                    args.dry_run, args.delay, context,
+                    args.dry_run, args.delay, args.verbose, context,
                 )
                 grand_found += fo
                 grand_downloaded += dl
