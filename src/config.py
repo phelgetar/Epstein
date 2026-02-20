@@ -42,6 +42,10 @@ VIDEO_DIR = PDF_DIR / "videos"
 VIDEO_DOWNLOAD_WORKERS = 10
 VIDEO_BATCH_SIZE = 10
 
+# Google Drive download settings
+GDRIVE_DIR = PDF_DIR / "Google_Drive_Files"
+GDRIVE_FOLDER_ID = "1cyc_2BkQQYaocMOYj87lWbA4BAN_URWz"
+
 # Thumbnail settings
 THUMB_DIR = DATA_DIR / "thumbnails"
 THUMB_WIDTH = 1000          # px wide (height auto-scaled)
