@@ -10,6 +10,8 @@ Usage:
     python -m src.deploy --check              # Validate remote environment only
     python -m src.deploy --restart            # Restart the server process
     python -m src.deploy --stop               # Stop the server process
+    python -m src.deploy --data-only          # Sync data files only (SQLite, thumbnails, classifications)
+    python -m src.deploy --files-only         # Sync large files only (PDFs, images, videos)
 """
 
 import argparse
@@ -37,13 +39,21 @@ DEPLOY_FILES = [
     "src/config.py",
     "src/build_index.py",
     "src/logging_setup.py",
+    "src/init_db.py",
     "static/",
     "requirements-server.txt",
 ]
 
-# Large data files to sync separately
+# Data files to sync (SQLite index, thumbnails, classifications)
 DEPLOY_DATA = [
     "data/epstein_search.db",
+    "data/thumbnails/",
+    "data/classifications/",
+]
+
+# Large content files (PDFs, Google Drive images/videos)
+DEPLOY_FILES_LARGE = [
+    "epstein_doj_files/",  # ~176 GB — all PDFs, images, videos
 ]
 
 
@@ -101,16 +111,48 @@ def sync_files():
             parent = str(Path(path).parent)
             run(f"rsync -avz {local} {REMOTE_HOST}:{REMOTE_DIR}/{parent}/")
 
-    # Sync data files (large, use compression)
+    print("  Sync complete.\n")
+
+
+def sync_data():
+    """Rsync data files (SQLite DB, thumbnails, classifications) to the remote host."""
+    print("\n  Syncing data files...")
+
+    ssh(f"mkdir -p {REMOTE_DIR}/data/thumbnails {REMOTE_DIR}/data/classifications")
+
     for path in DEPLOY_DATA:
         local = PROJECT_ROOT / path
         if not local.exists():
             print(f"    SKIP (missing): {path}")
             continue
-        parent = str(Path(path).parent)
-        run(f"rsync -avz --progress {local} {REMOTE_HOST}:{REMOTE_DIR}/{parent}/")
 
-    print("  Sync complete.\n")
+        if local.is_dir():
+            run(f"rsync -avz --progress {local}/ {REMOTE_HOST}:{REMOTE_DIR}/{path}")
+        else:
+            parent = str(Path(path).parent)
+            run(f"rsync -avz --progress {local} {REMOTE_HOST}:{REMOTE_DIR}/{parent}/")
+
+    print("  Data sync complete.\n")
+
+
+def sync_large_files():
+    """Rsync large content files (PDFs, images, videos) to the remote host."""
+    print("\n  Syncing large files (this may take a while)...")
+
+    for path in DEPLOY_FILES_LARGE:
+        local = PROJECT_ROOT / path
+        if not local.exists():
+            print(f"    SKIP (missing): {path}")
+            continue
+
+        # Create remote directory
+        ssh(f"mkdir -p {REMOTE_DIR}/{path}")
+
+        # Use --progress and --partial for large transfers (resume on failure)
+        run(f"rsync -avz --progress --partial {local}/ {REMOTE_HOST}:{REMOTE_DIR}/{path}",
+            check=True)
+
+    print("  Large file sync complete.\n")
 
 
 def install_deps():
@@ -146,6 +188,7 @@ def write_env():
         "BASE_PATH": BASE_PATH,
         "SENTRY_DSN": os.environ.get("SENTRY_DSN", ""),
         "SENTRY_ENVIRONMENT": "production",
+        "DATABASE_URL": os.environ.get("DATABASE_URL", ""),
     }
 
     env_content = "\n".join(f"{k}={v}" for k, v in env_vars.items() if v)
@@ -193,6 +236,7 @@ def deploy():
 
     check_remote()
     sync_files()
+    sync_data()
     install_deps()
     write_env()
     stop_server()
@@ -210,7 +254,11 @@ def main():
     parser.add_argument("--check", action="store_true", help="Check remote only")
     parser.add_argument("--restart", action="store_true", help="Restart server")
     parser.add_argument("--stop", action="store_true", help="Stop server")
-    parser.add_argument("--sync-only", action="store_true", help="Sync files only")
+    parser.add_argument("--sync-only", action="store_true", help="Sync source files only")
+    parser.add_argument("--data-only", action="store_true",
+                        help="Sync data files only (SQLite DB, thumbnails, classifications)")
+    parser.add_argument("--files-only", action="store_true",
+                        help="Sync large files only (PDFs, images, videos — ~176 GB)")
     args = parser.parse_args()
 
     if args.check:
@@ -221,6 +269,10 @@ def main():
         stop_server()
     elif args.sync_only:
         sync_files()
+    elif args.data_only:
+        sync_data()
+    elif args.files_only:
+        sync_large_files()
     else:
         deploy()
 

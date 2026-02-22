@@ -35,7 +35,10 @@ JSON_FILE_LIST = "epstein_pdfs_file_list.json"
 SEARCH_DB = DATA_DIR / "epstein_search.db"
 
 # Allowed file extensions the server may serve
-ALLOWED_EXTENSIONS = {".html", ".json", ".pdf", ".css", ".js", ".png", ".jpg", ".ico", ".mp4"}
+ALLOWED_EXTENSIONS = {".html", ".json", ".pdf", ".css", ".js", ".png", ".jpg", ".jpeg", ".ico", ".mp4", ".tif", ".wav"}
+
+# MySQL analytics database (optional)
+DATABASE_URL = os.environ.get("DATABASE_URL", "")  # mysql+pymysql://user:pass@host/db
 
 # Download settings
 DOWNLOAD_WORKERS = 10      # Concurrent PDF download threads

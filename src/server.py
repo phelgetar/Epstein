@@ -12,8 +12,10 @@ Features:
 import json
 import logging
 import os
+import queue
 import socket
 import sys
+import threading
 import time as _time
 import webbrowser
 from contextlib import asynccontextmanager
@@ -48,7 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
     PROJECT_ROOT, STATIC_DIR, DATA_DIR, PDF_DIR, THUMB_DIR, CLASSIFY_DIR,
     SERVER_HOST, PREFERRED_PORT, PORT_RANGE,
-    JSON_SEARCH_INDEX, JSON_FULL, LOG_FILE, SEARCH_DB, BASE_PATH,
+    JSON_SEARCH_INDEX, JSON_FULL, LOG_FILE, SEARCH_DB, BASE_PATH, DATABASE_URL,
 )
 from src.logging_setup import setup_logging
 from src.search import PDFSearcher, SQLiteSearcher, _parse_and_search
@@ -63,6 +65,89 @@ searcher = None  # PDFSearcher or SQLiteSearcher
 doc_stats: dict = {"total_docs": 0, "total_pages": 0}
 _classifications: dict = {}  # dataset_num -> {"metadata": {...}, "pages": {...}}
 _classifications_mtime: dict = {}  # dataset_num -> last mtime loaded
+
+# ─── MySQL Analytics (optional) ──────────────────────────────
+
+_analytics_queue: queue.Queue = queue.Queue()
+_analytics_thread: Optional[threading.Thread] = None
+_mysql_conn = None  # pymysql connection (used only by worker thread)
+
+
+def _parse_database_url(url: str) -> dict:
+    """Parse mysql+pymysql://user:pass@host/db into connection kwargs."""
+    url = url.replace("mysql+pymysql://", "").replace("mysql://", "")
+    userpass, hostdb = url.split("@", 1)
+    user, password = userpass.split(":", 1)
+    host, database = hostdb.split("/", 1)
+    port = 3306
+    if ":" in host:
+        host, port_str = host.split(":", 1)
+        port = int(port_str)
+    return dict(host=host, user=user, password=password, database=database, port=port)
+
+
+def _analytics_worker():
+    """Background thread that drains the analytics queue and inserts into MySQL."""
+    global _mysql_conn
+    import pymysql
+
+    kwargs = _parse_database_url(DATABASE_URL)
+    kwargs["charset"] = "utf8mb4"
+    kwargs["autocommit"] = True
+
+    while True:
+        try:
+            item = _analytics_queue.get()
+            if item is None:  # shutdown sentinel
+                break
+
+            # Lazily connect / reconnect
+            if _mysql_conn is None or not _mysql_conn.open:
+                try:
+                    _mysql_conn = pymysql.connect(**kwargs)
+                except Exception:
+                    logger.error("mysql_connect_error", exc_info=True)
+                    continue
+
+            table, params = item
+            with _mysql_conn.cursor() as cur:
+                if table == "search_queries":
+                    cur.execute(
+                        "INSERT INTO search_queries "
+                        "(query, total_results, total_matches, dataset_filter, sort, page, per_page, duration_ms, client_ip, user_agent) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        params,
+                    )
+                elif table == "page_views":
+                    cur.execute(
+                        "INSERT INTO page_views "
+                        "(method, path, query_string, status_code, duration_ms, client_ip, user_agent) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        params,
+                    )
+        except Exception:
+            logger.error("analytics_insert_error", exc_info=True)
+            # Reset connection on error so it reconnects next time
+            _mysql_conn = None
+
+
+def log_search_query(query, total_results, total_matches, dataset_filter, sort, page, per_page, duration_ms, client_ip, user_agent):
+    """Enqueue a search query record (fire-and-forget)."""
+    if not DATABASE_URL:
+        return
+    _analytics_queue.put(("search_queries", (
+        query, total_results, total_matches, dataset_filter, sort, page, per_page,
+        duration_ms, client_ip, user_agent,
+    )))
+
+
+def log_page_view(method, path, query_string, status_code, duration_ms, client_ip, user_agent):
+    """Enqueue a page view record (fire-and-forget)."""
+    if not DATABASE_URL:
+        return
+    _analytics_queue.put(("page_views", (
+        method, path, query_string, status_code, duration_ms, client_ip, user_agent,
+    )))
 
 
 # ─── Classification Loader ────────────────────────────────────
@@ -93,7 +178,7 @@ def _load_classifications(ds: int) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load search index and classification data into memory on startup."""
-    global searcher, doc_stats
+    global searcher, doc_stats, _analytics_thread
 
     # Prefer SQLite FTS5 index (fast, low memory)
     if SEARCH_DB.exists():
@@ -157,7 +242,21 @@ async def lifespan(app: FastAPI):
         print(f"  Classifications loaded: {cls_count:,} images across "
               f"{len(_classifications)} datasets")
 
+    # Start MySQL analytics worker thread (if DATABASE_URL is configured)
+    if DATABASE_URL:
+        _analytics_thread = threading.Thread(target=_analytics_worker, daemon=True)
+        _analytics_thread.start()
+        logger.info("analytics_started", extra={"data": {"backend": "mysql"}})
+        print("  Analytics: MySQL logging enabled")
+
     yield
+
+    # Shutdown analytics worker
+    if _analytics_thread is not None:
+        _analytics_queue.put(None)  # sentinel to stop worker
+        _analytics_thread.join(timeout=5)
+    if _mysql_conn is not None and _mysql_conn.open:
+        _mysql_conn.close()
     logger.info("server_shutdown")
 
 
@@ -217,6 +316,16 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "duration_ms": round(duration_ms, 2),
                 "client": request.client.host if request.client else None,
             }})
+            # MySQL analytics (fire-and-forget)
+            log_page_view(
+                method=request.method,
+                path=path,
+                query_string=str(request.url.query)[:1000],
+                status_code=response.status_code,
+                duration_ms=round(duration_ms, 2),
+                client_ip=request.client.host if request.client else None,
+                user_agent=(request.headers.get("user-agent", ""))[:500],
+            )
         return response
 
 
@@ -249,6 +358,7 @@ async def stats():
 
 @router.get("/api/search")
 async def search_api(
+    request: Request,
     q: str = Query(..., min_length=1, description="Search query"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=10000),
@@ -260,6 +370,8 @@ async def search_api(
     whole_word: bool = Query(False),
     use_regex: bool = Query(False),
 ):
+    search_start = _time.perf_counter()
+
     if searcher is None:
         logger.warning("api_search_no_index", extra={"data": {"query": q}})
         return JSONResponse(
@@ -286,11 +398,16 @@ async def search_api(
                 "contexts": r["contexts"][:50],
             })
 
+        search_duration = (_time.perf_counter() - search_start) * 1000
         logger.info("api_search", extra={"data": {
             "query": q, "total_results": total, "total_matches": total_matches,
             "page": page, "per_page": per_page, "dataset_filter": dataset,
             "sort": sort, "backend": "sqlite",
         }})
+        log_search_query(q, total, total_matches, dataset, sort, page, per_page,
+                         round(search_duration, 2),
+                         request.client.host if request.client else None,
+                         (request.headers.get("user-agent", ""))[:500])
 
         return {
             "results": response_results,
@@ -338,11 +455,16 @@ async def search_api(
             "contexts": r["contexts"][:50],
         })
 
+    search_duration = (_time.perf_counter() - search_start) * 1000
     logger.info("api_search", extra={"data": {
         "query": q, "total_results": total, "total_matches": total_matches,
         "page": page, "per_page": per_page, "dataset_filter": dataset,
         "sort": sort, "backend": "json",
     }})
+    log_search_query(q, total, total_matches, dataset, sort, page, per_page,
+                     round(search_duration, 2),
+                     request.client.host if request.client else None,
+                     (request.headers.get("user-agent", ""))[:500])
 
     return {
         "results": response_results,

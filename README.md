@@ -15,6 +15,8 @@ Tools for downloading, extracting, searching, and browsing the publicly released
 - **Web Interface** — Browser-based search UI with highlighted results and inline PDF viewing
 - **Gallery** — Thumbnail gallery with lightbox viewer, tag autocomplete, content type and person filtering
 - **Log Viewer** — Searchable structured log viewer with level/module filtering
+- **MySQL Analytics** — Optional search query and page view logging to MySQL
+- **Deployment** — rsync-based deployment to remote cPanel server with data/file sync modes
 
 ## Prerequisites
 
@@ -134,7 +136,42 @@ python -m src.classifier --dry-run           # Count and estimate cost
 
 Uses Google Gemini 2.0 Flash to classify thumbnail images with description, tags, content type, and recognized people. Requires `GOOGLE_API_KEY` environment variable. Results stored in `data/classifications/data-set-N.json`.
 
-### 8. Search
+### 8. Initialize MySQL database (optional)
+
+```bash
+# Create tables using CLI args
+python -m src.init_db --host 162.241.218.175 --user USER --password PASS --database DB
+
+# Or using DATABASE_URL env var
+export DATABASE_URL=mysql+pymysql://user:pass@host/db
+python -m src.init_db
+
+# Drop and recreate tables
+python -m src.init_db --drop
+
+# Populate file inventory from local epstein_doj_files/
+python -m src.init_db --populate-files
+```
+
+Creates three MySQL tables: `search_queries` (search API analytics), `page_views` (request tracking), and `files` (file inventory). The `--populate-files` flag scans `epstein_doj_files/` and inserts all PDFs, images, and videos into the `files` table.
+
+When the server is started with `DATABASE_URL` set, search queries and page views are automatically logged to MySQL via a background thread (fire-and-forget, never blocks requests).
+
+### 9. Deploy to production
+
+```bash
+python -m src.deploy                  # Full deployment (code + data + restart)
+python -m src.deploy --check          # Validate remote environment only
+python -m src.deploy --sync-only      # Sync source code only
+python -m src.deploy --data-only      # Sync data files (SQLite DB, thumbnails, classifications)
+python -m src.deploy --files-only     # Sync large files (PDFs, images, videos — ~176 GB)
+python -m src.deploy --restart        # Restart the server process
+python -m src.deploy --stop           # Stop the server process
+```
+
+Deploys to a remote cPanel host via rsync. The `--data-only` and `--files-only` flags allow syncing specific file categories without restarting the server, useful for incremental updates.
+
+### 10. Search
 
 **Web interface:**
 
@@ -178,6 +215,8 @@ src/
   thumbnails.py        — Batch PDF thumbnail generator (PyMuPDF)
   search.py            — CLI search with AND/OR/NOT/NEAR and page references
   server.py            — FastAPI server with security headers and auto-reload
+  init_db.py           — MySQL schema creation and file inventory population
+  deploy.py            — rsync-based deployment to remote cPanel host
   logging_setup.py     — Structured JSONL logging configuration
 static/
   search.html          — Web search interface
@@ -202,8 +241,19 @@ The local server includes several hardening measures:
 - CORS restricted to localhost and private network origins
 - Content-Security-Policy, X-Frame-Options, X-Content-Type-Options headers
 - Path traversal protection (realpath validation)
-- File extension allowlist (`.html`, `.json`, `.pdf`, `.css`, `.js`, `.png`, `.jpg`, `.ico`, `.mp4`)
+- File extension allowlist (`.html`, `.json`, `.pdf`, `.css`, `.js`, `.png`, `.jpg`, `.jpeg`, `.ico`, `.mp4`, `.tif`, `.wav`)
 - Sentry error tracking (optional, via `SENTRY_DSN` env var)
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | MySQL connection string for analytics logging (`mysql+pymysql://user:pass@host/db`) |
+| `SENTRY_DSN` | Sentry error tracking DSN |
+| `BASE_PATH` | URL prefix for reverse proxy (e.g. `/a7f3x9k2m4p8`) |
+| `DEPLOY_HOST` | Remote SSH host for deployment (default: `jarheads@162.241.218.175`) |
+| `DEPLOY_DIR` | Remote deployment directory (default: `~/epstein_server`) |
+| `GOOGLE_API_KEY` | Google API key for Gemini classifier |
 
 ## License
 
