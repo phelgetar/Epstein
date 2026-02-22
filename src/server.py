@@ -13,7 +13,10 @@ import json
 import logging
 import os
 import queue
+import re
+import signal
 import socket
+import subprocess
 import sys
 import threading
 import time as _time
@@ -28,6 +31,7 @@ load_dotenv()
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
+from pydantic import BaseModel
 from fastapi import APIRouter, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -737,6 +741,127 @@ async def logs_stats():
         "modules": sorted(modules),
         "total": total,
     }
+
+
+# ─── Dashboard API (process management) ──────────────────────
+
+# Allowed modules that can be run from the dashboard
+_ALLOWED_MODULES = {
+    "src.downloader", "src.video_downloader", "src.mp4_checker",
+    "src.gdrive_downloader", "src.extractor", "src.build_index",
+    "src.thumbnails", "src.classifier", "src.search",
+    "src.init_db", "src.deploy",
+}
+
+# Active dashboard processes: pid -> {process, output, status, return_code}
+_dashboard_procs: dict = {}
+
+
+def _validate_command(command: str) -> tuple[bool, str]:
+    """Validate a dashboard command is safe to run."""
+    parts = command.split()
+    if len(parts) < 3 or parts[0] != "python" or parts[1] != "-m":
+        return False, "Command must start with 'python -m'"
+    module = parts[2]
+    if module not in _ALLOWED_MODULES:
+        return False, f"Module '{module}' is not allowed"
+    # Reject shell metacharacters
+    if re.search(r'[;&|`$(){}]', command):
+        return False, "Shell metacharacters not allowed"
+    return True, ""
+
+
+def _run_process(pid: int, command: str):
+    """Run a subprocess and capture output in a background thread."""
+    proc_info = _dashboard_procs[pid]
+    try:
+        proc = proc_info["process"]
+        while True:
+            line = proc.stdout.readline()
+            if line == "" and proc.poll() is not None:
+                break
+            if line:
+                proc_info["output"] += line
+        # Also capture any remaining stderr
+        stderr = proc.stderr.read()
+        if stderr:
+            proc_info["output"] += stderr
+        proc_info["return_code"] = proc.returncode
+        proc_info["status"] = "finished" if proc.returncode == 0 else "error"
+    except Exception as e:
+        proc_info["output"] += f"\n[Error: {e}]"
+        proc_info["status"] = "error"
+
+
+class DashboardRunRequest(BaseModel):
+    command: str
+
+
+@router.post("/api/dashboard/run")
+async def dashboard_run(req: DashboardRunRequest):
+    """Run a CLI command and return its PID for output polling."""
+    valid, err = _validate_command(req.command)
+    if not valid:
+        return JSONResponse(status_code=400, content={"error": err})
+
+    parts = req.command.split()
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-u"] + parts[1:],  # -u for unbuffered output
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=str(PROJECT_ROOT),
+        )
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+    pid = proc.pid
+    _dashboard_procs[pid] = {
+        "process": proc,
+        "output": "",
+        "status": "running",
+        "return_code": None,
+        "command": req.command,
+    }
+
+    # Start output reader thread
+    t = threading.Thread(target=_run_process, args=(pid, req.command), daemon=True)
+    t.start()
+
+    logger.info("dashboard_run", extra={"data": {"command": req.command, "pid": pid}})
+    return {"pid": pid, "status": "running"}
+
+
+@router.get("/api/dashboard/output/{pid}")
+async def dashboard_output(pid: int):
+    """Get the current output of a running or finished process."""
+    info = _dashboard_procs.get(pid)
+    if not info:
+        return JSONResponse(status_code=404, content={"error": "Process not found"})
+    return {
+        "pid": pid,
+        "output": info["output"],
+        "status": info["status"],
+        "return_code": info["return_code"],
+    }
+
+
+@router.post("/api/dashboard/stop/{pid}")
+async def dashboard_stop(pid: int):
+    """Stop a running process."""
+    info = _dashboard_procs.get(pid)
+    if not info:
+        return JSONResponse(status_code=404, content={"error": "Process not found"})
+    proc = info["process"]
+    if proc.poll() is None:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            info["status"] = "stopped"
+            logger.info("dashboard_stop", extra={"data": {"pid": pid}})
+        except ProcessLookupError:
+            pass
+    return {"pid": pid, "status": info["status"]}
 
 
 # ─── Include Router & Static File Mounts ─────────────────────
