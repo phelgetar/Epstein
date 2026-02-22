@@ -830,8 +830,8 @@
                     <p class="subtitle">Document Search & Analysis System</p>
                 </div>
                 <div style="display:flex;gap:0.5rem;">
-                    <a href="/static/gallery.html" style="font-family:'JetBrains Mono',monospace;font-size:0.875rem;color:var(--accent);text-decoration:none;text-transform:uppercase;letter-spacing:0.05em;padding:0.5rem 1rem;border:2px solid var(--accent);transition:all 0.2s ease;" onmouseover="this.style.background='var(--accent)';this.style.color='white'" onmouseout="this.style.background='';this.style.color='var(--accent)'">Gallery</a>
-                    <a href="/static/logs.html" style="font-family:'JetBrains Mono',monospace;font-size:0.875rem;color:var(--accent);text-decoration:none;text-transform:uppercase;letter-spacing:0.05em;padding:0.5rem 1rem;border:2px solid var(--accent);transition:all 0.2s ease;" onmouseover="this.style.background='var(--accent)';this.style.color='white'" onmouseout="this.style.background='';this.style.color='var(--accent)'">Logs</a>
+                    <a href="gallery.html" style="font-family:'JetBrains Mono',monospace;font-size:0.875rem;color:var(--accent);text-decoration:none;text-transform:uppercase;letter-spacing:0.05em;padding:0.5rem 1rem;border:2px solid var(--accent);transition:all 0.2s ease;" onmouseover="this.style.background='var(--accent)';this.style.color='white'" onmouseout="this.style.background='';this.style.color='var(--accent)'">Gallery</a>
+                    <a href="logs.html" style="font-family:'JetBrains Mono',monospace;font-size:0.875rem;color:var(--accent);text-decoration:none;text-transform:uppercase;letter-spacing:0.05em;padding:0.5rem 1rem;border:2px solid var(--accent);transition:all 0.2s ease;" onmouseover="this.style.background='var(--accent)';this.style.color='white'" onmouseout="this.style.background='';this.style.color='var(--accent)'">Logs</a>
                 </div>
             </div>
         </header>
@@ -977,6 +977,9 @@
     </div>
 
     <script>
+        // ─── Base Path (auto-detect from URL for secret prefix support) ──
+        const BASE_PATH = window.location.pathname.split('/static/')[0] || '';
+
         // ─── Global State ───────────────────────────────────────────
 
         let lastQuery = '';
@@ -987,7 +990,7 @@
 
         async function loadStats() {
             try {
-                const resp = await fetch('/api/stats');
+                const resp = await fetch(BASE_PATH + '/api/stats');
                 const data = await resp.json();
 
                 document.getElementById('totalDocs').textContent = data.total_docs;
@@ -1054,7 +1057,7 @@
 
             try {
                 const params = getSearchParams(page, paginationState.perPage);
-                const resp = await fetch('/api/search?' + params.toString());
+                const resp = await fetch(BASE_PATH + '/api/search?' + params.toString());
                 const data = await resp.json();
 
                 if (!resp.ok) {
@@ -1290,7 +1293,7 @@
             // Fetch all results (up to 10000) for export
             const params = getSearchParams(1, 10000);
             try {
-                const resp = await fetch('/api/search?' + params.toString());
+                const resp = await fetch(BASE_PATH + '/api/search?' + params.toString());
                 const data = await resp.json();
 
                 if (!resp.ok || data.results.length === 0) return;
@@ -1353,7 +1356,8 @@
             (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
         function openPdfModal(filepath, filename, pageNumber) {
-            const url = pageNumber ? filepath + '#page=' + pageNumber : filepath;
+            const fullPath = BASE_PATH + filepath;
+            const url = pageNumber ? fullPath + '#page=' + pageNumber : fullPath;
 
             // iOS: open in new tab where Safari's native viewer works fully
             if (isIOS) {
@@ -1374,9 +1378,9 @@
                     <div class="pdf-error">
                         <div class="pdf-error-icon">&#x26A0;&#xFE0F;</div>
                         <div class="no-results-text">Could not load PDF</div>
-                        <div class="no-results-hint">File path: ${escapeHtml(filepath)}</div>
+                        <div class="no-results-hint">File path: ${escapeHtml(fullPath)}</div>
                         <div style="margin-top: 1rem;">
-                            <a href="${escapeHtml(filepath)}" target="_blank" class="pdf-link">
+                            <a href="${escapeHtml(fullPath)}" target="_blank" class="pdf-link">
                                 Open in New Tab
                             </a>
                         </div>

@@ -708,7 +708,7 @@
                     <h1>Epstein DOJ Files</h1>
                     <p class="subtitle">Document Gallery</p>
                 </div>
-                <a href="/static/search.html" class="nav-link">Search</a>
+                <a href="search.html" class="nav-link">Search</a>
             </div>
         </header>
 
@@ -831,6 +831,9 @@
     </div>
 
     <script>
+        // ─── Base Path (auto-detect from URL for secret prefix support) ──
+        const BASE_PATH = window.location.pathname.split('/static/')[0] || '';
+
         // ─── State ──────────────────────────────────────────────────
 
         let allImages = [];          // image src paths for current page
@@ -929,7 +932,7 @@
 
         async function fetchTagSuggestions(q) {
             try {
-                let url = `/api/tags/autocomplete?q=${encodeURIComponent(q)}&limit=15`;
+                let url = `${BASE_PATH}/api/tags/autocomplete?q=${encodeURIComponent(q)}&limit=15`;
                 if (currentDataset !== 'all') {
                     url += `&dataset=${currentDataset}`;
                 }
@@ -1029,7 +1032,7 @@
             _lastStatsDataset = currentDataset;
 
             try {
-                let url = '/api/classifications/stats';
+                let url = BASE_PATH + '/api/classifications/stats';
                 if (currentDataset !== 'all') {
                     url += `?dataset=${currentDataset}`;
                 }
@@ -1093,7 +1096,7 @@
             await loadClassificationStats();
 
             const perPage = getPerPage();
-            let url = `/api/gallery?page=${viewPage}&per_page=${perPage}`;
+            let url = `${BASE_PATH}/api/gallery?page=${viewPage}&per_page=${perPage}`;
             if (currentDataset !== 'all') {
                 url += `&dataset=${currentDataset}`;
             }

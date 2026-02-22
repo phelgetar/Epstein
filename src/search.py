@@ -12,11 +12,12 @@ import csv
 import json
 import logging
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.config import DATA_DIR, JSON_SEARCH_INDEX, JSON_FULL
+from src.config import DATA_DIR, JSON_SEARCH_INDEX, JSON_FULL, SEARCH_DB
 
 logger = logging.getLogger(__name__)
 
@@ -223,10 +224,206 @@ class PDFSearcher:
             print()
 
 
+class SQLiteSearcher:
+    """FTS5-backed searcher. Uses SQLite instead of loading JSON into memory."""
+
+    def __init__(self, db_path=None):
+        if db_path is None:
+            db_path = str(SEARCH_DB)
+        self.db_path = str(db_path)
+        self.conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode=WAL")
+
+        row = self.conn.execute("SELECT COUNT(*) AS c FROM documents").fetchone()
+        self.doc_count = row["c"]
+        logger.info("sqlite_index_loaded", extra={"data": {
+            "db_path": self.db_path, "document_count": self.doc_count,
+        }})
+
+    def _translate_query(self, query):
+        """Translate our query syntax to FTS5 syntax.
+
+        Our syntax:  Maxwell AND island
+        FTS5 syntax: maxwell island          (implicit AND)
+
+        Our syntax:  Maxwell OR Epstein
+        FTS5 syntax: maxwell OR epstein
+
+        Our syntax:  Maxwell NOT flight
+        FTS5 syntax: maxwell NOT flight
+
+        Our syntax:  "grand jury"
+        FTS5 syntax: "grand jury"
+
+        Our syntax:  Epstein NEAR/5 island
+        FTS5 syntax: NEAR(epstein island, 5)
+        """
+        # Step 1: Extract quoted phrases
+        phrases = []
+
+        def replace_phrase(m):
+            phrases.append(m.group(0))  # keep the quotes
+            return f"__PH{len(phrases) - 1}__"
+
+        working = re.sub(r'"[^"]+"', replace_phrase, query)
+
+        def restore(s):
+            return re.sub(r"__PH(\d+)__", lambda m: phrases[int(m.group(1))], s)
+
+        # Step 2: Handle NEAR/N → NEAR(term1 term2, N)
+        def near_replace(m):
+            t1 = restore(m.group(1))
+            t2 = restore(m.group(3))
+            n = m.group(2)
+            return f"NEAR({t1} {t2}, {n})"
+
+        working = re.sub(r"(\S+)\s+NEAR/(\d+)\s+(\S+)", near_replace, working, flags=re.IGNORECASE)
+
+        # Step 3: Remove AND (FTS5 uses implicit AND)
+        working = re.sub(r"\s+AND\s+", " ", working, flags=re.IGNORECASE)
+
+        # Restore phrases and return
+        return restore(working).strip()
+
+    def _execute_fts(self, fts_query, query, dataset=None, limit=None, offset=0):
+        """Execute an FTS5 query and return results.
+
+        Uses a 2-phase approach for performance:
+        1. Match + metadata (fast, no snippet)
+        2. Snippet only for the paginated slice
+        """
+        # Build WHERE clause
+        where = "documents_fts MATCH ?"
+        params = [fts_query]
+        if dataset is not None:
+            where += " AND d.dataset = ?"
+            params.append(dataset)
+
+        # Phase 1: Count total matches (very fast)
+        count_row = self.conn.execute(f"""
+            SELECT COUNT(*) AS c
+            FROM documents_fts
+            JOIN documents d ON d.id = documents_fts.rowid
+            WHERE {where}
+        """, params).fetchone()
+        total = count_row["c"]
+
+        if total == 0:
+            return [], 0
+
+        # Phase 2: Get paginated results with snippets
+        sql = f"""
+            SELECT d.id, d.dataset, d.filename, d.filepath, d.pages, d.page_offsets,
+                   snippet(documents_fts, 0, '>>>>', '<<<<', '...', 64) AS snippet,
+                   bm25(documents_fts) AS rank
+            FROM documents_fts
+            JOIN documents d ON d.id = documents_fts.rowid
+            WHERE {where}
+            ORDER BY rank
+        """
+        if limit is not None:
+            sql += f" LIMIT {int(limit)} OFFSET {int(offset)}"
+        params_copy = list(params)
+
+        rows = self.conn.execute(sql, params_copy).fetchall()
+
+        results = []
+        for row in rows:
+            snippet_text = row["snippet"]
+            match_count = snippet_text.count(">>>>")
+            context = snippet_text.replace(">>>>", "").replace("<<<<", "")
+
+            page_offsets = json.loads(row["page_offsets"]) if row["page_offsets"] else None
+
+            contexts = [{
+                "position": 0,
+                "context": context,
+                "match": query,
+            }]
+            if page_offsets and len(page_offsets) > 1:
+                contexts[0]["page"] = 1
+
+            results.append({
+                "dataset": row["dataset"],
+                "filename": row["filename"],
+                "filepath": row["filepath"],
+                "pages": row["pages"],
+                "match_count": max(1, match_count),
+                "contexts": contexts,
+            })
+
+        return results, total
+
+    def search(self, query, case_sensitive=False, whole_word=False, context_chars=300,
+               dataset=None, limit=None, offset=0):
+        """Search using FTS5 MATCH."""
+        fts_query = self._translate_query(query)
+        if not fts_query:
+            return [], 0
+
+        try:
+            return self._execute_fts(fts_query, query, dataset, limit, offset)
+        except sqlite3.OperationalError as e:
+            logger.warning("sqlite_search_error", extra={"data": {
+                "query": query, "fts_query": fts_query, "error": str(e),
+            }})
+            # Fall back to simple term search if FTS5 syntax fails
+            simple = re.sub(r'[^\w\s"]', '', query).strip()
+            if simple and simple != fts_query:
+                try:
+                    return self._execute_fts(simple, query, dataset, limit, offset)
+                except sqlite3.OperationalError:
+                    return [], 0
+            return [], 0
+
+    def search_multiple(self, queries, operator="AND", **kwargs):
+        """Search for multiple terms with AND/OR logic via FTS5."""
+        if operator.upper() == "AND":
+            combined = " ".join(queries)
+        else:
+            combined = " OR ".join(queries)
+        return self.search(combined, **kwargs)
+
+    def search_proximity(self, term1, term2, max_distance, case_sensitive=False,
+                         context_chars=300, **kwargs):
+        """Proximity search using FTS5 NEAR()."""
+        query = f"{term1} NEAR/{max_distance} {term2}"
+        return self.search(query, **kwargs)
+
+    def print_results(self, results, max_contexts=3):
+        """Pretty print search results (same as PDFSearcher)."""
+        if not results:
+            print("\nNo results found.")
+            return
+
+        total_matches = sum(r["match_count"] for r in results)
+        print(f"\n{'=' * 80}")
+        print(f"Found {len(results)} document(s) with {total_matches} total match(es)")
+        print(f"{'=' * 80}\n")
+
+        for i, result in enumerate(results, 1):
+            print(f"{i}. {result['filename']} (Data Set {result['dataset']})")
+            print(f"   Pages: {result['pages']} | Matches: {result['match_count']}")
+            print(f"   Path: {result['filepath']}")
+
+            contexts_to_show = min(max_contexts, len(result["contexts"]))
+            for j, ctx in enumerate(result["contexts"][:contexts_to_show], 1):
+                page_info = f" (Page {ctx['page']})" if "page" in ctx else ""
+                print(f"\n   Match {j}{page_info}:")
+                print(f"   {ctx['context']}")
+
+            if len(result["contexts"]) > max_contexts:
+                remaining = len(result["contexts"]) - max_contexts
+                print(f"\n   ... and {remaining} more match(es)")
+            print()
+
+
 def _parse_and_search(searcher, query):
     """Parse a query string for operators and execute the search.
 
     Supports: "quoted phrases", NEAR/N proximity, NOT, AND, OR.
+    Works with both PDFSearcher and SQLiteSearcher.
     """
     # Step 1: Extract quoted phrases into placeholders
     phrases = []

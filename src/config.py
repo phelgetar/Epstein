@@ -3,6 +3,7 @@ Centralized configuration for the Epstein DOJ Files project.
 All paths, ports, and security settings in one place.
 """
 
+import os
 from pathlib import Path
 
 # Project root (parent of src/)
@@ -17,6 +18,7 @@ PDF_DIR = PROJECT_ROOT / "epstein_doj_files"
 SERVER_HOST = "0.0.0.0"  # Bind to all interfaces for LAN access
 PREFERRED_PORT = 8000
 PORT_RANGE = range(8000, 8100)
+BASE_PATH = os.environ.get("BASE_PATH", "").rstrip("/")  # e.g. "/a7f3x9k2m4p8"
 
 # Data source
 SOURCE_URL = "https://www.justice.gov/epstein/doj-disclosures"
@@ -28,6 +30,9 @@ JSON_FULL = "epstein_pdfs_full.json"
 JSON_SEARCH_INDEX = "epstein_pdfs_search_index.json"
 JSON_SUMMARY = "epstein_pdfs_summary.json"
 JSON_FILE_LIST = "epstein_pdfs_file_list.json"
+
+# SQLite FTS5 search database
+SEARCH_DB = DATA_DIR / "epstein_search.db"
 
 # Allowed file extensions the server may serve
 ALLOWED_EXTENSIONS = {".html", ".json", ".pdf", ".css", ".js", ".png", ".jpg", ".ico", ".mp4"}

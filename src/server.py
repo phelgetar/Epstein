@@ -26,7 +26,7 @@ load_dotenv()
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
-from fastapi import FastAPI, Query, Request
+from fastapi import APIRouter, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -48,10 +48,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
     PROJECT_ROOT, STATIC_DIR, DATA_DIR, PDF_DIR, THUMB_DIR, CLASSIFY_DIR,
     SERVER_HOST, PREFERRED_PORT, PORT_RANGE,
-    JSON_SEARCH_INDEX, JSON_FULL, LOG_FILE,
+    JSON_SEARCH_INDEX, JSON_FULL, LOG_FILE, SEARCH_DB, BASE_PATH,
 )
 from src.logging_setup import setup_logging
-from src.search import PDFSearcher, _parse_and_search
+from src.search import PDFSearcher, SQLiteSearcher, _parse_and_search
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Global State ────────────────────────────────────────────
 
-searcher: Optional[PDFSearcher] = None
+searcher = None  # PDFSearcher or SQLiteSearcher
 doc_stats: dict = {"total_docs": 0, "total_pages": 0}
 _classifications: dict = {}  # dataset_num -> {"metadata": {...}, "pages": {...}}
 _classifications_mtime: dict = {}  # dataset_num -> last mtime loaded
@@ -95,34 +95,53 @@ async def lifespan(app: FastAPI):
     """Load search index and classification data into memory on startup."""
     global searcher, doc_stats
 
-    # Find search index
-    candidates = [
-        DATA_DIR / JSON_SEARCH_INDEX,
-        DATA_DIR / JSON_FULL,
-        PROJECT_ROOT / JSON_SEARCH_INDEX,
-        PROJECT_ROOT / JSON_FULL,
-    ]
-    json_file = None
-    for candidate in candidates:
-        if candidate.exists():
-            json_file = candidate
-            break
-
-    if json_file:
-        searcher = PDFSearcher(str(json_file))
-        doc_stats["total_docs"] = len(searcher.data)
-        doc_stats["total_pages"] = sum(doc.get("pages", 0) for doc in searcher.data)
+    # Prefer SQLite FTS5 index (fast, low memory)
+    if SEARCH_DB.exists():
+        searcher = SQLiteSearcher(str(SEARCH_DB))
+        doc_stats["total_docs"] = searcher.doc_count
+        # Get total pages from SQLite
+        row = searcher.conn.execute(
+            "SELECT SUM(pages) AS total FROM documents"
+        ).fetchone()
+        doc_stats["total_pages"] = row["total"] or 0
         logger.info("server_startup", extra={"data": {
-            "index_file": str(json_file),
+            "backend": "sqlite",
+            "index_file": str(SEARCH_DB),
             "total_docs": doc_stats["total_docs"],
             "total_pages": doc_stats["total_pages"],
         }})
+        print(f"  Search backend: SQLite FTS5 ({doc_stats['total_docs']:,} docs)")
     else:
-        logger.warning("server_startup_no_index", extra={"data": {
-            "candidates_checked": [str(c) for c in candidates],
-        }})
-        print("\nWarning: No search index found.")
-        print("Run the extractor first: python -m src.extractor\n")
+        # Fall back to JSON (high memory)
+        candidates = [
+            DATA_DIR / JSON_SEARCH_INDEX,
+            DATA_DIR / JSON_FULL,
+            PROJECT_ROOT / JSON_SEARCH_INDEX,
+            PROJECT_ROOT / JSON_FULL,
+        ]
+        json_file = None
+        for candidate in candidates:
+            if candidate.exists():
+                json_file = candidate
+                break
+
+        if json_file:
+            searcher = PDFSearcher(str(json_file))
+            doc_stats["total_docs"] = len(searcher.data)
+            doc_stats["total_pages"] = sum(doc.get("pages", 0) for doc in searcher.data)
+            logger.info("server_startup", extra={"data": {
+                "backend": "json",
+                "index_file": str(json_file),
+                "total_docs": doc_stats["total_docs"],
+                "total_pages": doc_stats["total_pages"],
+            }})
+            print(f"  Search backend: JSON in-memory ({doc_stats['total_docs']:,} docs)")
+        else:
+            logger.warning("server_startup_no_index", extra={"data": {
+                "candidates_checked": [str(c) for c in candidates],
+            }})
+            print("\nWarning: No search index found.")
+            print("Run the extractor first: python -m src.extractor\n")
 
     # Initial classification load
     for ds in range(1, 13):
@@ -186,7 +205,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         duration_ms = (_time.perf_counter() - start) * 1000
         path = request.url.path
-        if path.startswith("/api/") or path == "/":
+        api_prefix = f"{BASE_PATH}/api/" if BASE_PATH else "/api/"
+        root_path = f"{BASE_PATH}/" if BASE_PATH else "/"
+        if path.startswith(api_prefix) or path == root_path:
             level = logging.WARNING if response.status_code >= 400 else logging.INFO
             logger.log(level, "http_request", extra={"data": {
                 "method": request.method,
@@ -213,22 +234,20 @@ app.add_middleware(
 
 # ─── API Routes ──────────────────────────────────────────────
 
-@app.get("/")
+router = APIRouter(prefix=BASE_PATH)
+
+
+@router.get("/")
 async def root():
-    return RedirectResponse(url="/static/search.html")
+    return RedirectResponse(url=f"{BASE_PATH}/static/search.html")
 
-#
-# @app.get("/sentry-debug")
-# async def trigger_error():
-#     division_by_zero = 1 / 0
-#
 
-@app.get("/api/stats")
+@router.get("/api/stats")
 async def stats():
     return doc_stats
 
 
-@app.get("/api/search")
+@router.get("/api/search")
 async def search_api(
     q: str = Query(..., min_length=1, description="Search query"),
     page: int = Query(1, ge=1),
@@ -248,7 +267,40 @@ async def search_api(
             content={"error": "Search index not loaded. Run: python -m src.extractor"},
         )
 
-    # Run the search
+    # SQLite backend — push pagination and dataset filter to SQL
+    if isinstance(searcher, SQLiteSearcher):
+        offset = (page - 1) * per_page
+        results, total = searcher.search(
+            q, dataset=dataset, limit=per_page, offset=offset,
+        )
+        total_matches = total  # approximate (count of matching docs)
+
+        response_results = []
+        for r in results:
+            response_results.append({
+                "dataset": r["dataset"],
+                "filename": r["filename"],
+                "filepath": r["filepath"],
+                "pages": r["pages"],
+                "match_count": r["match_count"],
+                "contexts": r["contexts"][:50],
+            })
+
+        logger.info("api_search", extra={"data": {
+            "query": q, "total_results": total, "total_matches": total_matches,
+            "page": page, "per_page": per_page, "dataset_filter": dataset,
+            "sort": sort, "backend": "sqlite",
+        }})
+
+        return {
+            "results": response_results,
+            "total": total,
+            "totalMatches": total_matches,
+            "page": page,
+            "perPage": per_page,
+        }
+
+    # JSON backend — load all results, filter/sort/paginate in memory
     results = _parse_and_search(searcher, q)
 
     # Apply filters
@@ -288,7 +340,8 @@ async def search_api(
 
     logger.info("api_search", extra={"data": {
         "query": q, "total_results": total, "total_matches": total_matches,
-        "page": page, "per_page": per_page, "dataset_filter": dataset, "sort": sort,
+        "page": page, "per_page": per_page, "dataset_filter": dataset,
+        "sort": sort, "backend": "json",
     }})
 
     return {
@@ -341,7 +394,7 @@ def _get_dataset_images(ds: int, content_type: str = None,
     return [(ds, name) for name in all_names]
 
 
-@app.get("/api/gallery")
+@router.get("/api/gallery")
 async def gallery_api(
     dataset: Optional[int] = Query(None, ge=1, le=12),
     page: int = Query(1, ge=1),
@@ -367,7 +420,7 @@ async def gallery_api(
     images_response = []
     for ds_num, name in page_items:
         entry = {
-            "src": f"/thumbnails/data-set-{ds_num}/{name}",
+            "src": f"{BASE_PATH}/thumbnails/data-set-{ds_num}/{name}",
             "dataset": ds_num,
         }
         cls_data = _classifications.get(ds_num, {}).get("pages", {})
@@ -391,7 +444,7 @@ async def gallery_api(
 
 _classification_stats_cache: dict = {}  # key: dataset int or None (all)
 
-@app.get("/api/classifications/stats")
+@router.get("/api/classifications/stats")
 async def classification_stats(dataset: Optional[int] = Query(None, ge=1, le=12)):
     """Return available content_types, top tags, and top people for dataset(s)."""
     datasets_to_query = [dataset] if dataset is not None else list(range(1, 13))
@@ -438,7 +491,7 @@ async def classification_stats(dataset: Optional[int] = Query(None, ge=1, le=12)
     return result
 
 
-@app.get("/api/tags/autocomplete")
+@router.get("/api/tags/autocomplete")
 async def tags_autocomplete(
     q: str = Query("", description="Tag prefix to match"),
     dataset: Optional[int] = Query(None, ge=1, le=12),
@@ -472,7 +525,7 @@ async def tags_autocomplete(
 
 # ─── Logs API ────────────────────────────────────────────────
 
-@app.get("/api/logs")
+@router.get("/api/logs")
 async def logs_api(
     q: Optional[str] = Query(None, description="Search text (matches event, module, data)"),
     level: Optional[str] = Query(None, pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$"),
@@ -531,7 +584,7 @@ async def logs_api(
     }
 
 
-@app.get("/api/logs/stats")
+@router.get("/api/logs/stats")
 async def logs_stats():
     """Return log level counts and unique modules."""
     if not LOG_FILE.exists():
@@ -564,20 +617,22 @@ async def logs_stats():
     }
 
 
-# ─── Static File Mounts ─────────────────────────────────────
-# Order matters — mount after API routes so /api/* takes precedence
+# ─── Include Router & Static File Mounts ─────────────────────
+# Include router first, then mount static files
+
+app.include_router(router)
 
 if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.mount(f"{BASE_PATH}/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 if DATA_DIR.exists():
-    app.mount("/data", StaticFiles(directory=str(DATA_DIR)), name="data")
+    app.mount(f"{BASE_PATH}/data", StaticFiles(directory=str(DATA_DIR)), name="data")
 
 if PDF_DIR.exists():
-    app.mount("/epstein_doj_files", StaticFiles(directory=str(PDF_DIR)), name="pdfs")
+    app.mount(f"{BASE_PATH}/epstein_doj_files", StaticFiles(directory=str(PDF_DIR)), name="pdfs")
 
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/thumbnails", StaticFiles(directory=str(THUMB_DIR)), name="thumbnails")
+app.mount(f"{BASE_PATH}/thumbnails", StaticFiles(directory=str(THUMB_DIR)), name="thumbnails")
 
 
 # ─── Main ────────────────────────────────────────────────────
@@ -610,7 +665,7 @@ def main():
         print(f"Error: No available ports in range {PORT_RANGE.start}-{PORT_RANGE.stop - 1}")
         sys.exit(1)
 
-    url = f"http://127.0.0.1:{port}/static/search.html"
+    url = f"http://127.0.0.1:{port}{BASE_PATH}/static/search.html"
 
     # Get LAN IP
     lan_ip = None
@@ -624,6 +679,7 @@ def main():
 
     logger.info("server_starting", extra={"data": {
         "host": SERVER_HOST, "port": port, "lan_ip": lan_ip,
+        "base_path": BASE_PATH,
     }})
 
     print("=" * 70)
@@ -635,11 +691,13 @@ def main():
         print(f"  Port:        {port} (preferred {PREFERRED_PORT} was busy)")
     else:
         print(f"  Port:        {port}")
+    if BASE_PATH:
+        print(f"  Base path:   {BASE_PATH}")
     print(f"  Local:       {url}")
     if lan_ip:
-        print(f"  Network:     http://{lan_ip}:{port}/static/search.html")
+        print(f"  Network:     http://{lan_ip}:{port}{BASE_PATH}/static/search.html")
     print()
-    print(f"  API docs:    http://127.0.0.1:{port}/docs")
+    print(f"  API docs:    http://127.0.0.1:{port}{BASE_PATH}/docs")
     print("  Security:    CORS (LAN), CSP enabled")
     print("  Auto-reload: ENABLED (watching src/ and static/)")
     print()

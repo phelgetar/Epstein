@@ -1,0 +1,7 @@
+# Minimal dependencies for the production web server
+fastapi
+uvicorn[standard]
+gunicorn
+python-dotenv
+sentry-sdk[fastapi]
+pymysql
