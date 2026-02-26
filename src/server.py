@@ -55,6 +55,7 @@ from src.config import (
     PROJECT_ROOT, STATIC_DIR, DATA_DIR, PDF_DIR, THUMB_DIR, CLASSIFY_DIR,
     SERVER_HOST, PREFERRED_PORT, PORT_RANGE,
     JSON_SEARCH_INDEX, JSON_FULL, LOG_FILE, SEARCH_DB, BASE_PATH, DATABASE_URL,
+    GCS_BASE_URL,
 )
 from src.logging_setup import setup_logging
 from src.search import PDFSearcher, SQLiteSearcher, _parse_and_search
@@ -288,14 +289,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         elif path.endswith((".jpg", ".jpeg", ".png")) and response.status_code == 200:
             response.headers["Cache-Control"] = "public, max-age=604800"
         else:
+            gcs = "https://storage.googleapis.com " if GCS_BASE_URL else ""
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
                 "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
                 "font-src 'self' https://fonts.gstatic.com; "
                 "script-src 'self' 'unsafe-inline'; "
-                "img-src 'self' data:; "
-                "frame-src 'self'; "
-                "object-src 'self';"
+                f"img-src 'self' data: {gcs}; "
+                f"frame-src 'self' {gcs}; "
+                f"object-src 'self' {gcs};"
             )
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
 
@@ -393,14 +395,17 @@ async def search_api(
 
         response_results = []
         for r in results:
-            response_results.append({
+            entry = {
                 "dataset": r["dataset"],
                 "filename": r["filename"],
                 "filepath": r["filepath"],
                 "pages": r["pages"],
                 "match_count": r["match_count"],
                 "contexts": r["contexts"][:50],
-            })
+            }
+            if GCS_BASE_URL:
+                entry["url"] = f"{GCS_BASE_URL}{r['filepath']}"
+            response_results.append(entry)
 
         search_duration = (_time.perf_counter() - search_start) * 1000
         logger.info("api_search", extra={"data": {
@@ -450,14 +455,17 @@ async def search_api(
     # Build response — strip the heavy 'text' field from doc spread
     response_results = []
     for r in page_results:
-        response_results.append({
+        entry = {
             "dataset": r["dataset"],
             "filename": r["filename"],
             "filepath": r["filepath"],
             "pages": r["pages"],
             "match_count": r["match_count"],
             "contexts": r["contexts"][:50],
-        })
+        }
+        if GCS_BASE_URL:
+            entry["url"] = f"{GCS_BASE_URL}{r['filepath']}"
+        response_results.append(entry)
 
     search_duration = (_time.perf_counter() - search_start) * 1000
     logger.info("api_search", extra={"data": {
@@ -488,12 +496,18 @@ def _get_dataset_images(ds: int, content_type: str = None,
     tags: list of tags — image must match ALL of them (AND logic).
     """
     _load_classifications(ds)
-    thumb_dir = THUMB_DIR / f"data-set-{ds}"
-    if not thumb_dir.exists():
-        return []
 
     if ds not in _gallery_cache:
-        _gallery_cache[ds] = sorted(f.name for f in thumb_dir.glob("*.jpg"))
+        if GCS_BASE_URL:
+            # On GCS deployment: use classification page keys as thumbnail list
+            cls_pages = _classifications.get(ds, {}).get("pages", {})
+            _gallery_cache[ds] = sorted(cls_pages.keys()) if cls_pages else []
+        else:
+            # Local development: scan filesystem
+            thumb_dir = THUMB_DIR / f"data-set-{ds}"
+            if not thumb_dir.exists():
+                return []
+            _gallery_cache[ds] = sorted(f.name for f in thumb_dir.glob("*.jpg"))
 
     all_names = _gallery_cache[ds]
     cls_data = _classifications.get(ds, {}).get("pages", {})
@@ -546,7 +560,7 @@ async def gallery_api(
     images_response = []
     for ds_num, name in page_items:
         entry = {
-            "src": f"{BASE_PATH}/thumbnails/data-set-{ds_num}/{name}",
+            "src": f"{GCS_BASE_URL}/thumbnails/data-set-{ds_num}/{name}" if GCS_BASE_URL else f"{BASE_PATH}/thumbnails/data-set-{ds_num}/{name}",
             "dataset": ds_num,
         }
         cls_data = _classifications.get(ds_num, {}).get("pages", {})
@@ -747,10 +761,10 @@ async def logs_stats():
 
 # Allowed modules that can be run from the dashboard
 _ALLOWED_MODULES = {
-    "src.downloader", "src.video_downloader", "src.mp4_checker",
+    "src.downloader",
     "src.gdrive_downloader", "src.extractor", "src.build_index",
     "src.thumbnails", "src.classifier", "src.search",
-    "src.init_db", "src.deploy",
+    "src.init_db", "src.deploy", "src.gcs_sync",
 }
 
 # Active dashboard processes: pid -> {process, output, status, return_code}
@@ -795,6 +809,19 @@ def _run_process(pid: int, command: str):
 
 class DashboardRunRequest(BaseModel):
     command: str
+
+
+@router.get("/api/dashboard/readme")
+async def dashboard_readme():
+    """Return the raw contents of README.md."""
+    readme_path = PROJECT_ROOT / "README.md"
+    if not readme_path.exists():
+        return JSONResponse(status_code=404, content={"error": "README.md not found"})
+    try:
+        text = readme_path.read_text(encoding="utf-8")
+        return JSONResponse(content={"content": text})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @router.post("/api/dashboard/run")
@@ -875,11 +902,12 @@ if STATIC_DIR.exists():
 if DATA_DIR.exists():
     app.mount(f"{BASE_PATH}/data", StaticFiles(directory=str(DATA_DIR)), name="data")
 
-if PDF_DIR.exists():
-    app.mount(f"{BASE_PATH}/epstein_doj_files", StaticFiles(directory=str(PDF_DIR)), name="pdfs")
-
-THUMB_DIR.mkdir(parents=True, exist_ok=True)
-app.mount(f"{BASE_PATH}/thumbnails", StaticFiles(directory=str(THUMB_DIR)), name="thumbnails")
+if not GCS_BASE_URL:
+    # Serve files locally when GCS is not configured
+    if PDF_DIR.exists():
+        app.mount(f"{BASE_PATH}/epstein_doj_files", StaticFiles(directory=str(PDF_DIR)), name="pdfs")
+    THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    app.mount(f"{BASE_PATH}/thumbnails", StaticFiles(directory=str(THUMB_DIR)), name="thumbnails")
 
 
 # ─── Main ────────────────────────────────────────────────────

@@ -15,8 +15,6 @@ import os
 import sys
 from pathlib import Path
 
-import pymysql
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import PROJECT_ROOT, PDF_DIR, DATABASE_URL
 
@@ -99,8 +97,9 @@ def parse_database_url(url: str) -> dict:
     return dict(host=host, user=user, password=password, database=database, port=port)
 
 
-def get_connection(args) -> pymysql.Connection:
+def get_connection(args):
     """Create a MySQL connection from CLI args or DATABASE_URL."""
+    import pymysql
     if args.host:
         return pymysql.connect(
             host=args.host,

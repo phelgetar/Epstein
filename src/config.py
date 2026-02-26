@@ -19,6 +19,7 @@ SERVER_HOST = "0.0.0.0"  # Bind to all interfaces for LAN access
 PREFERRED_PORT = 8000
 PORT_RANGE = range(8000, 8100)
 BASE_PATH = os.environ.get("BASE_PATH", "").rstrip("/")  # e.g. "/a7f3x9k2m4p8"
+GCS_BASE_URL = os.environ.get("GCS_BASE_URL", "").rstrip("/")  # e.g. "https://storage.googleapis.com/epstein-doj-files"
 
 # Data source
 SOURCE_URL = "https://www.justice.gov/epstein/doj-disclosures"

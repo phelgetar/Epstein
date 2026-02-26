@@ -5,8 +5,6 @@ Tools for downloading, extracting, searching, and browsing the publicly released
 ## Features
 
 - **Downloader** — Playwright-based PDF downloader with stealth patches to bypass Akamai CDN, batched pagination, and multithreaded downloads
-- **Video Downloader** — Downloads video files from the DOJ search page, saving as `.mp4`
-- **MP4 Checker** — Scans existing PDF datasets for corresponding `.mp4` companion files on the server
 - **Google Drive Downloader** — Downloads files from shared Google Drive folders using the internal Drive API for complete file listings (no 50-file cap) with auto-discovery of API keys
 - **Extractor** — Converts downloaded PDFs to searchable JSON using Poppler (`pdftotext`/`pdfinfo`), with page-level offsets
 - **Thumbnails** — Batch JPEG thumbnail generator for all PDF pages using PyMuPDF
@@ -15,29 +13,46 @@ Tools for downloading, extracting, searching, and browsing the publicly released
 - **Web Interface** — Browser-based search UI with highlighted results and inline PDF viewing
 - **Gallery** — Thumbnail gallery with lightbox viewer, tag autocomplete, content type and person filtering
 - **Log Viewer** — Searchable structured log viewer with level/module filtering
+- **GCS Sync** — Upload new/changed files to Google Cloud Storage for public hosting
 - **MySQL Analytics** — Optional search query and page view logging to MySQL
-- **Deployment** — rsync-based deployment to remote cPanel server with data/file sync modes
+- **Deployment** — Docker-based deployment to Google Cloud Run
+
+## Architecture
+
+All data files (PDFs, thumbnails, classifications, Google Drive files) are hosted on **Google Cloud Storage** (`gs://epstein-doj-files-jarheads`). The web server only handles search API requests and serves the HTML/CSS/JS frontend — file URLs point directly to GCS.
+
+```
+Local Machine                    GCS Bucket                      Cloud Run
+┌──────────────┐    gcs_sync     ┌──────────────────┐             ┌─────────────┐
+│ PDFs (176 GB)│ ──────────────> │ epstein_doj_files/│ <── browser │ src/server.py│
+│ Thumbnails   │                 │ thumbnails/       │             │ static/      │
+│ Classifications│               │ classifications/  │             │ search index │
+└──────────────┘                 └──────────────────┘             └─────────────┘
+                                  epstein.jarheads.net → Cloud Run service
+```
 
 ## Prerequisites
 
 - Python 3.8+
 - [Poppler](https://poppler.freedesktop.org/) (for PDF text extraction)
 - Playwright + Chromium (for downloading)
+- [Google Cloud SDK](https://cloud.google.com/sdk) (for GCS sync)
 
 ```bash
 # macOS
-brew install poppler
+brew install poppler google-cloud-sdk
 
 # Ubuntu/Debian
 sudo apt install poppler-utils
 
 # Python dependencies
 pip install -r requirements.txt
-# or manually:
-pip install fastapi uvicorn watchdog playwright playwright-stealth requests beautifulsoup4 pymupdf google-genai pydantic sentry-sdk
 
 # Install Playwright browsers
 playwright install chromium
+
+# Authenticate with GCP (one-time)
+gcloud auth login
 ```
 
 ## Quick Start
@@ -56,19 +71,7 @@ python -m src.downloader --headless          # Headless mode (page 0 only)
 
 Downloads PDFs from justice.gov into `epstein_doj_files/data-set-N/`. Output shows only errors and actual downloads; the summary includes per-dataset failure counts.
 
-### 2. Download Videos
-
-```bash
-python -m src.video_downloader                                # Download all (default query)
-python -m src.video_downloader --query "No Images Produced"   # Custom search query
-python -m src.video_downloader --workers 10                   # Concurrent threads
-python -m src.video_downloader --batch-size 20                # Pages per batch
-python -m src.video_downloader --dry-run                      # Count only
-```
-
-Searches the DOJ search page for video files linked as `.pdf`, downloads them, and saves as `.mp4` in `epstein_doj_files/videos/`.
-
-### 3. Download Google Drive Files
+### 2. Download Google Drive Files
 
 ```bash
 python -m src.gdrive_downloader                    # Download everything
@@ -87,20 +90,7 @@ Downloads files from a shared Google Drive folder into `epstein_doj_files/Google
 
 Uses Google Drive's internal API for file listing (no browser, no authentication, no 50-file cap) and handles Google's virus-scan confirmation for large file downloads. API keys are auto-discovered if the embedded key rotates.
 
-### 4. Check for MP4 Companions
-
-```bash
-python -m src.mp4_checker                    # Check datasets 8, 9, 10
-python -m src.mp4_checker --dataset 8        # Dataset 8 only
-python -m src.mp4_checker --dataset 8 9 10   # Explicit datasets
-python -m src.mp4_checker --workers 5        # Concurrent threads
-python -m src.mp4_checker --delay 1          # 1s between probe requests
-python -m src.mp4_checker --dry-run          # Check without downloading
-```
-
-Scans dataset pages for PDF URLs and checks whether a corresponding `.mp4` version exists on the DOJ server. Downloads any found into the dataset directory alongside the PDFs.
-
-### 5. Extract text to JSON
+### 3. Extract text to JSON
 
 ```bash
 python -m src.extractor
@@ -108,7 +98,7 @@ python -m src.extractor
 
 Processes all PDFs and creates searchable JSON files in `data/`. Only errors are printed during extraction; the summary shows total files, pages, size, and per-dataset failures.
 
-### 6. Generate thumbnails
+### 4. Generate thumbnails
 
 ```bash
 python -m src.thumbnails                     # All datasets
@@ -121,7 +111,7 @@ python -m src.thumbnails --force             # Regenerate existing
 
 Renders every page of every PDF as a JPEG thumbnail into `data/thumbnails/`. Only errors are printed; the summary includes per-dataset failure counts.
 
-### 7. Classify images (optional)
+### 5. Classify images (optional)
 
 ```bash
 python -m src.classifier                     # All datasets
@@ -136,40 +126,46 @@ python -m src.classifier --dry-run           # Count and estimate cost
 
 Uses Google Gemini 2.0 Flash to classify thumbnail images with description, tags, content type, and recognized people. Requires `GOOGLE_API_KEY` environment variable. Results stored in `data/classifications/data-set-N.json`.
 
+### 6. Sync to Google Cloud Storage
+
+```bash
+python -m src.gcs_sync                       # Sync everything to GCS
+python -m src.gcs_sync --pdfs                # PDFs/videos/GDrive files only
+python -m src.gcs_sync --thumbnails          # Thumbnails only
+python -m src.gcs_sync --classifications     # Classification JSONs only
+python -m src.gcs_sync --dry-run             # Preview without uploading
+```
+
+Uploads new or changed files to the GCS bucket (`gs://epstein-doj-files-jarheads`). Uses checksum-based diffing so only modified files are transferred. Run this after downloading new files, generating thumbnails, or running the classifier.
+
+### 7. Build search index
+
+```bash
+python -m src.build_index                    # Build SQLite FTS5 index
+python -m src.build_index --force            # Rebuild from scratch
+```
+
+Creates the SQLite FTS5 full-text search index from extracted JSON data. The index is saved to `data/epstein_search.db` and used by the web server for search queries.
+
 ### 8. Initialize MySQL database (optional)
 
 ```bash
-# Create tables using CLI args
-python -m src.init_db --host 162.241.218.175 --user USER --password PASS --database DB
-
-# Or using DATABASE_URL env var
-export DATABASE_URL=mysql+pymysql://user:pass@host/db
-python -m src.init_db
-
-# Drop and recreate tables
-python -m src.init_db --drop
-
-# Populate file inventory from local epstein_doj_files/
-python -m src.init_db --populate-files
+python -m src.init_db --host HOST --user USER --password PASS --database DB
+python -m src.init_db --drop                 # Drop and recreate tables
+python -m src.init_db --populate-files       # Populate file inventory
 ```
 
-Creates three MySQL tables: `search_queries` (search API analytics), `page_views` (request tracking), and `files` (file inventory). The `--populate-files` flag scans `epstein_doj_files/` and inserts all PDFs, images, and videos into the `files` table.
-
-When the server is started with `DATABASE_URL` set, search queries and page views are automatically logged to MySQL via a background thread (fire-and-forget, never blocks requests).
+Creates MySQL tables for analytics: `search_queries`, `page_views`, and `files`. When the server runs with `DATABASE_URL` set, search queries and page views are logged automatically.
 
 ### 9. Deploy to production
 
 ```bash
-python -m src.deploy                  # Full deployment (code + data + restart)
-python -m src.deploy --check          # Validate remote environment only
-python -m src.deploy --sync-only      # Sync source code only
-python -m src.deploy --data-only      # Sync data files (SQLite DB, thumbnails, classifications)
-python -m src.deploy --files-only     # Sync large files (PDFs, images, videos — ~176 GB)
-python -m src.deploy --restart        # Restart the server process
-python -m src.deploy --stop           # Stop the server process
+gcloud run deploy epstein-server --source . \
+  --project=epstein-doj-files --region=us-central1 \
+  --allow-unauthenticated
 ```
 
-Deploys to a remote cPanel host via rsync. The `--data-only` and `--files-only` flags allow syncing specific file categories without restarting the server, useful for incremental updates.
+Builds a Docker image via Cloud Build (downloads SQLite DB and classifications from GCS during build) and deploys to Cloud Run. The service is available at `https://epstein.jarheads.net`. PDFs and thumbnails are served directly from GCS.
 
 ### 10. Search
 
@@ -200,14 +196,39 @@ python -m src.search "Epstein" --export csv      # Export as CSV/JSON
 python -m src.search                             # Interactive mode
 ```
 
+## Typical Workflow: Adding New DOJ Files
+
+When new datasets are released on justice.gov:
+
+```bash
+# 1. Download new files
+python -m src.downloader --dataset 13
+
+# 2. Extract text
+python -m src.extractor
+
+# 3. Generate thumbnails
+python -m src.thumbnails --dataset 13
+
+# 4. Classify images
+python -m src.classifier --dataset 13
+
+# 5. Rebuild search index
+python -m src.build_index --force
+
+# 6. Sync new files to GCS
+python -m src.gcs_sync
+
+# 7. Deploy updated server
+python -m src.deploy
+```
+
 ## Project Structure
 
 ```
 src/
   config.py            — Centralized paths, ports, and settings
   downloader.py        — Playwright-based PDF downloader
-  video_downloader.py  — Video downloader from DOJ search page
-  mp4_checker.py       — MP4 companion file checker/downloader
   gdrive_downloader.py — Google Drive shared folder downloader
   extractor.py         — PDF to JSON converter (Poppler)
   extractor_plumber.py — Alternative extractor using pdfplumber
@@ -215,13 +236,16 @@ src/
   thumbnails.py        — Batch PDF thumbnail generator (PyMuPDF)
   search.py            — CLI search with AND/OR/NOT/NEAR and page references
   server.py            — FastAPI server with security headers and auto-reload
+  build_index.py       — SQLite FTS5 index builder
   init_db.py           — MySQL schema creation and file inventory population
-  deploy.py            — rsync-based deployment to remote cPanel host
+  deploy.py            — rsync-based deployment to remote host
+  gcs_sync.py          — Google Cloud Storage file sync
   logging_setup.py     — Structured JSONL logging configuration
 static/
   search.html          — Web search interface
   gallery.html         — Thumbnail gallery with lightbox
   logs.html            — Log viewer interface
+  dashboard.html       — Admin dashboard with command runner
 scripts/
   start.sh             — Shell launcher (macOS/Linux)
   start.bat            — Shell launcher (Windows)
@@ -248,9 +272,10 @@ The local server includes several hardening measures:
 
 | Variable | Description |
 |----------|-------------|
+| `GCS_BASE_URL` | GCS public URL for file serving (e.g. `https://storage.googleapis.com/epstein-doj-files-jarheads`) |
 | `DATABASE_URL` | MySQL connection string for analytics logging (`mysql+pymysql://user:pass@host/db`) |
 | `SENTRY_DSN` | Sentry error tracking DSN |
-| `BASE_PATH` | URL prefix for reverse proxy (e.g. `/a7f3x9k2m4p8`) |
+| `BASE_PATH` | URL prefix for reverse proxy (e.g. `/epstein-DOJ-files`) |
 | `DEPLOY_HOST` | Remote SSH host for deployment (default: `jarheads@162.241.218.175`) |
 | `DEPLOY_DIR` | Remote deployment directory (default: `~/epstein_server`) |
 | `GOOGLE_API_KEY` | Google API key for Gemini classifier |

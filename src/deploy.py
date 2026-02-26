@@ -2,16 +2,14 @@
 """
 Deploy the Epstein DOJ Files web server to a remote cPanel host.
 
-Rsyncs only web-facing files (no downloaders/extractors), installs
-dependencies, writes Apache .htaccess proxy, and starts Gunicorn.
+Rsyncs only source code and static files — all data files (PDFs,
+thumbnails, classifications) are served from Google Cloud Storage.
 
 Usage:
-    python -m src.deploy                      # Deploy to production
+    python -m src.deploy                      # Full deploy (sync + restart)
     python -m src.deploy --check              # Validate remote environment only
     python -m src.deploy --restart            # Restart the server process
     python -m src.deploy --stop               # Stop the server process
-    python -m src.deploy --data-only          # Sync data files only (SQLite, thumbnails, classifications)
-    python -m src.deploy --files-only         # Sync large files only (PDFs, images, videos)
 """
 
 import argparse
@@ -21,7 +19,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.config import PROJECT_ROOT, BASE_PATH
+from src.config import PROJECT_ROOT, BASE_PATH, GCS_BASE_URL
 
 # ─── Remote Configuration ───────────────────────────────────
 
@@ -31,7 +29,8 @@ REMOTE_PORT = int(os.environ.get("DEPLOY_PORT", "8000"))
 PUBLIC_HTML = os.environ.get("DEPLOY_PUBLIC_HTML", "~/public_html")
 GUNICORN_WORKERS = int(os.environ.get("DEPLOY_WORKERS", "4"))
 
-# Files to deploy (relative to PROJECT_ROOT)
+# Source files to deploy (relative to PROJECT_ROOT)
+# No data files — PDFs, thumbnails, and classifications are on GCS
 DEPLOY_FILES = [
     "src/__init__.py",
     "src/server.py",
@@ -42,19 +41,13 @@ DEPLOY_FILES = [
     "src/init_db.py",
     "static/",
     "requirements-server.txt",
-]
-
-# Data files to sync (SQLite index, thumbnails, classifications)
-DEPLOY_DATA = [
     "data/epstein_search.db",
-    "data/thumbnails/",
     "data/classifications/",
 ]
 
-# Large content files (PDFs, Google Drive images/videos)
-DEPLOY_FILES_LARGE = [
-    "epstein_doj_files/",  # ~176 GB — all PDFs, images, videos
-]
+
+_SSH_CONTROL = "/tmp/ssh-deploy-%r@%h:%p"
+_SSH_OPTS = f"-o ControlMaster=auto -o ControlPath={_SSH_CONTROL} -o ControlPersist=120"
 
 
 def run(cmd, check=True, capture=False):
@@ -68,8 +61,9 @@ def run(cmd, check=True, capture=False):
 
 
 def ssh(cmd, check=True, capture=False):
-    """Run a command on the remote host."""
-    return run(f"ssh {REMOTE_HOST} '{cmd}'", check=check, capture=capture)
+    """Run a command on the remote host via a multiplexed SSH connection."""
+    import shlex
+    return run(f"ssh {_SSH_OPTS} {REMOTE_HOST} {shlex.quote(cmd)}", check=check, capture=capture)
 
 
 def check_remote():
@@ -92,13 +86,11 @@ def check_remote():
 
 
 def sync_files():
-    """Rsync project files to the remote host."""
-    print("\n  Syncing project files...")
+    """Rsync source code, static files, and search index to the remote host."""
+    print("\n  Syncing files...")
 
-    # Create remote directory structure
-    ssh(f"mkdir -p {REMOTE_DIR}/src {REMOTE_DIR}/static {REMOTE_DIR}/data")
+    ssh(f"mkdir -p {REMOTE_DIR}/src {REMOTE_DIR}/static {REMOTE_DIR}/data/classifications")
 
-    # Sync source files
     for path in DEPLOY_FILES:
         local = PROJECT_ROOT / path
         if not local.exists():
@@ -106,53 +98,12 @@ def sync_files():
             continue
 
         if local.is_dir():
-            run(f"rsync -avz --delete {local}/ {REMOTE_HOST}:{REMOTE_DIR}/{path}")
+            run(f"rsync -avz -e 'ssh {_SSH_OPTS}' --delete {local}/ {REMOTE_HOST}:{REMOTE_DIR}/{path}")
         else:
             parent = str(Path(path).parent)
-            run(f"rsync -avz {local} {REMOTE_HOST}:{REMOTE_DIR}/{parent}/")
+            run(f"rsync -avz -e 'ssh {_SSH_OPTS}' {local} {REMOTE_HOST}:{REMOTE_DIR}/{parent}/")
 
     print("  Sync complete.\n")
-
-
-def sync_data():
-    """Rsync data files (SQLite DB, thumbnails, classifications) to the remote host."""
-    print("\n  Syncing data files...")
-
-    ssh(f"mkdir -p {REMOTE_DIR}/data/thumbnails {REMOTE_DIR}/data/classifications")
-
-    for path in DEPLOY_DATA:
-        local = PROJECT_ROOT / path
-        if not local.exists():
-            print(f"    SKIP (missing): {path}")
-            continue
-
-        if local.is_dir():
-            run(f"rsync -avz --progress {local}/ {REMOTE_HOST}:{REMOTE_DIR}/{path}")
-        else:
-            parent = str(Path(path).parent)
-            run(f"rsync -avz --progress {local} {REMOTE_HOST}:{REMOTE_DIR}/{parent}/")
-
-    print("  Data sync complete.\n")
-
-
-def sync_large_files():
-    """Rsync large content files (PDFs, images, videos) to the remote host."""
-    print("\n  Syncing large files (this may take a while)...")
-
-    for path in DEPLOY_FILES_LARGE:
-        local = PROJECT_ROOT / path
-        if not local.exists():
-            print(f"    SKIP (missing): {path}")
-            continue
-
-        # Create remote directory
-        ssh(f"mkdir -p {REMOTE_DIR}/{path}")
-
-        # Use --progress and --partial for large transfers (resume on failure)
-        run(f"rsync -avz --progress --partial {local}/ {REMOTE_HOST}:{REMOTE_DIR}/{path}",
-            check=True)
-
-    print("  Large file sync complete.\n")
 
 
 def install_deps():
@@ -177,7 +128,6 @@ RewriteRule ^{prefix}/(.*) http://127.0.0.1:{REMOTE_PORT}/{BASE_PATH}/$1 [P,L]
 """.strip()
 
     print(f"\n  Writing .htaccess (prefix: /{prefix})...")
-    # Append to existing .htaccess (don't overwrite WordPress rules)
     ssh(f"cat >> {PUBLIC_HTML}/.htaccess << 'HTEOF'\n\n{htaccess_content}\nHTEOF")
     print("  .htaccess updated.\n")
 
@@ -186,6 +136,7 @@ def write_env():
     """Write .env file on the remote host."""
     env_vars = {
         "BASE_PATH": BASE_PATH,
+        "GCS_BASE_URL": GCS_BASE_URL,
         "SENTRY_DSN": os.environ.get("SENTRY_DSN", ""),
         "SENTRY_ENVIRONMENT": "production",
         "DATABASE_URL": os.environ.get("DATABASE_URL", ""),
@@ -213,7 +164,7 @@ def start_server():
 def stop_server():
     """Stop Gunicorn on the remote host."""
     print("\n  Stopping server...")
-    ssh(f"pkill -f 'gunicorn src.server:app' || echo 'No process found'")
+    ssh(f"pkill -f 'gunicorn src.server:app' || echo 'No process found'", check=False)
     print("  Server stopped.\n")
 
 
@@ -233,10 +184,10 @@ def deploy():
     print(f"  Port:       {REMOTE_PORT}")
     print(f"  Workers:    {GUNICORN_WORKERS}")
     print(f"  Base path:  {BASE_PATH or '(none)'}")
+    print(f"  GCS URL:    {GCS_BASE_URL or '(none)'}")
 
     check_remote()
     sync_files()
-    sync_data()
     install_deps()
     write_env()
     stop_server()
@@ -254,11 +205,6 @@ def main():
     parser.add_argument("--check", action="store_true", help="Check remote only")
     parser.add_argument("--restart", action="store_true", help="Restart server")
     parser.add_argument("--stop", action="store_true", help="Stop server")
-    parser.add_argument("--sync-only", action="store_true", help="Sync source files only")
-    parser.add_argument("--data-only", action="store_true",
-                        help="Sync data files only (SQLite DB, thumbnails, classifications)")
-    parser.add_argument("--files-only", action="store_true",
-                        help="Sync large files only (PDFs, images, videos — ~176 GB)")
     args = parser.parse_args()
 
     if args.check:
@@ -267,12 +213,6 @@ def main():
         restart_server()
     elif args.stop:
         stop_server()
-    elif args.sync_only:
-        sync_files()
-    elif args.data_only:
-        sync_data()
-    elif args.files_only:
-        sync_large_files()
     else:
         deploy()
 

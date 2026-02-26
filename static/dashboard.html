@@ -430,6 +430,110 @@
             background: white;
         }
 
+        /* Command description paragraph */
+        .command-description {
+            font-size: 0.95rem;
+            color: var(--ink-medium);
+            line-height: 1.7;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        /* Rendered markdown in README tab */
+        .readme-body {
+            background: white;
+            border: 2px solid var(--ink-dark);
+            box-shadow: 4px 4px 0 var(--shadow);
+            padding: 2rem 2.5rem;
+            font-size: 1.05rem;
+            line-height: 1.7;
+        }
+        .readme-body h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 2rem 0 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--ink-dark);
+        }
+        .readme-body h1:first-child { margin-top: 0; }
+        .readme-body h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 1.75rem 0 0.75rem;
+            padding-bottom: 0.3rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--accent);
+        }
+        .readme-body h3 {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin: 1.5rem 0 0.5rem;
+        }
+        .readme-body p { margin: 0.75rem 0; }
+        .readme-body ul, .readme-body ol {
+            margin: 0.75rem 0;
+            padding-left: 1.5rem;
+        }
+        .readme-body li { margin: 0.3rem 0; }
+        .readme-body code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85em;
+            background: var(--highlight);
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+        }
+        .readme-body pre {
+            background: var(--ink-dark);
+            color: #e0d9cf;
+            padding: 1rem 1.25rem;
+            overflow-x: auto;
+            margin: 1rem 0;
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+        .readme-body pre code {
+            background: none;
+            padding: 0;
+            color: inherit;
+            font-size: inherit;
+        }
+        .readme-body a {
+            color: var(--accent);
+            text-decoration: underline;
+        }
+        .readme-body a:hover { color: var(--accent-muted); }
+        .readme-body strong { font-weight: 700; }
+        .readme-body em { font-style: italic; }
+        .readme-body hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 1.5rem 0;
+        }
+        .readme-body table {
+            border-collapse: collapse;
+            margin: 1rem 0;
+            width: 100%;
+            font-size: 0.9rem;
+        }
+        .readme-body th, .readme-body td {
+            border: 1px solid var(--border);
+            padding: 0.5rem 0.75rem;
+            text-align: left;
+        }
+        .readme-body th {
+            background: var(--highlight);
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+        }
+        .readme-body blockquote {
+            border-left: 3px solid var(--accent);
+            padding-left: 1rem;
+            color: var(--ink-medium);
+            margin: 1rem 0;
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             h1 { font-size: 2rem; }
@@ -458,6 +562,7 @@
         <div class="tabs">
             <button class="tab active" data-tab="commands">Commands</button>
             <button class="tab" data-tab="logs">Logs</button>
+            <button class="tab" data-tab="readme">Readme</button>
         </div>
 
         <!-- ─── Commands Tab ─── -->
@@ -511,6 +616,11 @@
             </div>
             <div class="log-pagination" id="logPagination"></div>
         </div>
+
+        <!-- ─── Readme Tab ─── -->
+        <div id="tab-readme" class="tab-content">
+            <div id="readmeContent" class="readme-body" style="color:var(--ink-light);font-style:italic;">Loading README...</div>
+        </div>
     </div>
 
 <script>
@@ -527,129 +637,121 @@ const COMMANDS = [
         id: 'downloader',
         name: 'src.downloader',
         desc: 'PDF Downloader',
+        description: 'Playwright-based PDF downloader that scrapes justice.gov disclosure pages. Uses stealth patches (playwright-stealth) to bypass Akamai CDN bot detection. Navigates paginated dataset pages in configurable batches, extracts PDF links, and downloads them with multithreaded workers. Files are saved to epstein_doj_files/data-set-N/. Only errors and new downloads are printed; the final summary includes per-dataset failure counts.',
         args: [
-            { name: '--dataset', type: 'text', help: 'Dataset number(s), space-separated (default: all 1-12)', placeholder: '1 3 5' },
-            { name: '--workers', type: 'number', help: 'Concurrent download threads', placeholder: '10' },
-            { name: '--batch-size', type: 'number', help: 'Pages to scan per download batch', placeholder: '10' },
-            { name: '--dry-run', type: 'flag', help: 'Count files without downloading' },
-            { name: '--headless', type: 'flag', help: 'Run browser in headless mode' },
-        ]
-    },
-    {
-        id: 'video_downloader',
-        name: 'src.video_downloader',
-        desc: 'Video Downloader',
-        args: [
-            { name: '--query', type: 'text', help: 'Search query', placeholder: 'No Images Produced' },
-            { name: '--workers', type: 'number', help: 'Concurrent download threads', placeholder: '10' },
-            { name: '--batch-size', type: 'number', help: 'Pages to scan per batch', placeholder: '10' },
-            { name: '--dry-run', type: 'flag', help: 'Count files without downloading' },
-            { name: '--headless', type: 'flag', help: 'Run browser in headless mode' },
-        ]
-    },
-    {
-        id: 'mp4_checker',
-        name: 'src.mp4_checker',
-        desc: 'MP4 Companion Checker',
-        args: [
-            { name: '--dataset', type: 'text', help: 'Dataset number(s), space-separated', placeholder: '8 9 10' },
-            { name: '--workers', type: 'number', help: 'Concurrent check/download threads', placeholder: '10' },
-            { name: '--batch-size', type: 'number', help: 'Pages to scan per batch', placeholder: '10' },
-            { name: '--delay', type: 'number', help: 'Seconds between probe requests', placeholder: '0', step: '0.1' },
-            { name: '--dry-run', type: 'flag', help: 'Check without downloading' },
-            { name: '--verbose', type: 'flag', help: 'Print probe URLs and response codes' },
-            { name: '--headless', type: 'flag', help: 'Run browser in headless mode' },
+            { name: '--dataset', type: 'text', help: 'One or more dataset numbers separated by spaces. Defaults to all 12 datasets (1-12) if omitted. Example: "1 3 5" downloads only those three datasets.', placeholder: '1 3 5' },
+            { name: '--workers', type: 'number', help: 'Number of concurrent download threads. Default is 10. Higher values speed up downloads but increase server load and risk rate-limiting.', placeholder: '10' },
+            { name: '--batch-size', type: 'number', help: 'Number of paginated pages to scan per batch before downloading discovered PDFs. Default is 10. Larger batches discover more links before downloading starts.', placeholder: '10' },
+            { name: '--dry-run', type: 'flag', help: 'Crawl all dataset pages and count PDF links without actually downloading any files. Useful for estimating total file counts before committing to a full download.' },
+            { name: '--headless', type: 'flag', help: 'Run the Chromium browser in headless mode (no visible window). Note: only the initial page-zero navigation uses the browser; subsequent pages use direct HTTP requests.' },
         ]
     },
     {
         id: 'gdrive_downloader',
         name: 'src.gdrive_downloader',
         desc: 'Google Drive Downloader',
+        description: 'Downloads files from a shared Google Drive folder using the internal Drive API (no authentication required). Bypasses the normal 50-file listing cap by using the batchexecute RPC endpoint for complete file enumeration. The shared folder contains ~33,655 files across IMAGES (12 subfolders of scanned JPG/TIF document images) and NATIVES (4 subfolders of MP4 video and WAV audio). Automatically handles Google\'s virus-scan confirmation dialog for large file downloads. API keys are auto-discovered if the embedded key rotates.',
         args: [
-            { name: '--folder', type: 'text', help: 'Top-level folder (e.g. IMAGES, NATIVES)', placeholder: 'IMAGES' },
-            { name: '--workers', type: 'number', help: 'Concurrent download threads', placeholder: '5' },
-            { name: '--delay', type: 'number', help: 'Seconds between downloads', placeholder: '0', step: '0.1' },
-            { name: '--dry-run', type: 'flag', help: 'List folders and file counts only' },
-            { name: '--verbose', type: 'flag', help: 'Show file names during listing' },
+            { name: '--folder', type: 'text', help: 'Restrict download to a specific top-level folder name, e.g. "IMAGES" or "NATIVES". If omitted, downloads everything from all top-level folders.', placeholder: 'IMAGES' },
+            { name: '--workers', type: 'number', help: 'Number of concurrent download threads. Default is 5. Google Drive may rate-limit aggressive parallelism, so moderate values are recommended.', placeholder: '5' },
+            { name: '--delay', type: 'number', help: 'Delay in seconds between consecutive downloads. Default is 0. Use values like 0.5 to avoid triggering Google Drive rate limits on large batches.', placeholder: '0', step: '0.1' },
+            { name: '--dry-run', type: 'flag', help: 'List all folders and their file counts without downloading anything. Useful for previewing the folder structure and estimating download scope.' },
+            { name: '--verbose', type: 'flag', help: 'Print individual file names as they are listed from the Drive API. Without this flag, only folder-level summaries are shown.' },
         ]
     },
     {
         id: 'extractor',
         name: 'src.extractor',
         desc: 'PDF to JSON Converter',
+        description: 'Extracts full text from all downloaded PDFs using Poppler\'s pdftotext and pdfinfo command-line tools. Produces page-level text with form-feed delimiters and character offsets, enabling page-number references in search results. Outputs multiple JSON files to data/: a full extraction (with all text), a summary (with text previews), a flat search index, and a file listing. Requires Poppler to be installed (brew install poppler on macOS).',
         args: []
     },
     {
         id: 'build_index',
         name: 'src.build_index',
         desc: 'Build SQLite FTS5 Index',
+        description: 'Creates a SQLite FTS5 full-text search index from the extracted JSON data. The FTS5 index enables fast, low-memory search queries with ranking, and is the preferred search backend for the web server (falls back to loading the full JSON into memory if no SQLite index exists). The index is saved to data/epstein_search.db.',
         args: [
-            { name: '--force', type: 'flag', help: 'Rebuild index even if it already exists' },
+            { name: '--force', type: 'flag', help: 'Delete and rebuild the SQLite index from scratch, even if the database file already exists. Without this flag, the command skips building if the index is already present.' },
         ]
     },
     {
         id: 'thumbnails',
         name: 'src.thumbnails',
         desc: 'Thumbnail Generator',
+        description: 'Renders every page of every PDF as a JPEG thumbnail image using PyMuPDF (fitz). Output is organized per dataset in data/thumbnails/data-set-N/. By default, existing thumbnails are skipped for fast incremental runs. The summary includes per-dataset failure counts. Thumbnails are used by the gallery page for browsing and by the classifier for AI image analysis.',
         args: [
-            { name: '--dataset', type: 'text', help: 'Dataset number(s), space-separated (default: all)', placeholder: '1 3 5' },
-            { name: '--workers', type: 'number', help: 'Concurrent generation threads', placeholder: '4' },
-            { name: '--width', type: 'number', help: 'Thumbnail width in pixels', placeholder: '1000' },
-            { name: '--quality', type: 'number', help: 'JPEG quality 1-100', placeholder: '85' },
-            { name: '--force', type: 'flag', help: 'Regenerate existing thumbnails' },
+            { name: '--dataset', type: 'text', help: 'Dataset number(s) to process, space-separated. Defaults to all datasets (1-12). Example: "1 3 5" generates thumbnails only for those datasets.', placeholder: '1 3 5' },
+            { name: '--workers', type: 'number', help: 'Number of concurrent generation threads. Default is 4. Each thread renders pages from one PDF at a time using PyMuPDF.', placeholder: '4' },
+            { name: '--width', type: 'number', help: 'Width of the generated thumbnail in pixels. Default is 1000. Height is calculated automatically to preserve the page aspect ratio.', placeholder: '1000' },
+            { name: '--quality', type: 'number', help: 'JPEG compression quality, from 1 (smallest/worst) to 100 (largest/best). Default is 85, which provides a good balance of quality and file size.', placeholder: '85' },
+            { name: '--force', type: 'flag', help: 'Regenerate all thumbnails even if they already exist on disk. Without this flag, existing files are skipped for faster incremental runs.' },
         ]
     },
     {
         id: 'classifier',
         name: 'src.classifier',
         desc: 'Image Classifier (Gemini Flash)',
+        description: 'Classifies thumbnail images using the Google Gemini 2.0 Flash API. Each image is analyzed and tagged with a description, content type (e.g. "document", "photograph", "handwritten"), a list of descriptive tags, and recognized people names. Requires the GOOGLE_API_KEY environment variable. Results are saved per-dataset in data/classifications/data-set-N.json. Includes built-in cost estimation based on token usage and Gemini pricing.',
         args: [
-            { name: '--dataset', type: 'text', help: 'Datasets: comma-separated and/or ranges (e.g. 1,3,7-11)', placeholder: '1,3,7-11' },
-            { name: '--workers', type: 'number', help: 'Concurrent API calls', placeholder: '10' },
-            { name: '--rpm', type: 'number', help: 'Rate limit (requests/minute)', placeholder: '2000' },
-            { name: '--max-cost', type: 'number', help: 'Stop after estimated cost ($)', placeholder: '50', step: '0.01' },
-            { name: '--force', type: 'flag', help: 'Reclassify already-classified thumbnails' },
-            { name: '--dry-run', type: 'flag', help: 'Count and estimate cost only' },
+            { name: '--dataset', type: 'text', help: 'Datasets to classify, specified as comma-separated numbers and/or ranges. Example: "1,3,7-11" processes datasets 1, 3, and 7 through 11. Defaults to all datasets.', placeholder: '1,3,7-11' },
+            { name: '--workers', type: 'number', help: 'Number of concurrent Gemini API calls. Default is 10. The Gemini Flash free tier allows up to 2000 requests/minute, so high parallelism is safe.', placeholder: '10' },
+            { name: '--rpm', type: 'number', help: 'Rate limit in requests per minute. Default is 2000 (matching Gemini Flash free-tier limits). Lower this if you are on a paid plan with different rate limits.', placeholder: '2000' },
+            { name: '--max-cost', type: 'number', help: 'Stop processing after the estimated cumulative cost exceeds this dollar amount. Default is $50. Cost is estimated from token counts and Gemini Flash pricing.', placeholder: '50', step: '0.01' },
+            { name: '--force', type: 'flag', help: 'Reclassify images that already have classification data. Without this flag, previously classified thumbnails are skipped.' },
+            { name: '--dry-run', type: 'flag', help: 'Count the number of unclassified images and estimate the API cost without actually sending any requests to Gemini.' },
         ]
     },
     {
         id: 'init_db',
         name: 'src.init_db',
         desc: 'MySQL Database Init',
+        description: 'Creates the MySQL tables used for server analytics: search_queries (search API request logging), page_views (HTTP request tracking), and files (file inventory). Connection details can be provided via CLI arguments or the DATABASE_URL environment variable (mysql+pymysql://user:pass@host/db). The --populate-files flag scans the local epstein_doj_files/ directory and inserts all PDF, image, and video files into the files table.',
         args: [
-            { name: '--host', type: 'text', help: 'MySQL host', placeholder: '162.241.218.175' },
-            { name: '--user', type: 'text', help: 'MySQL user', placeholder: 'jarheads_0231' },
-            { name: '--password', type: 'text', help: 'MySQL password', placeholder: '' },
-            { name: '--database', type: 'text', help: 'MySQL database name', placeholder: 'jarheads_epstein' },
-            { name: '--port', type: 'number', help: 'MySQL port', placeholder: '3306' },
-            { name: '--drop', type: 'flag', help: 'Drop and recreate tables' },
-            { name: '--populate-files', type: 'flag', help: 'Scan and insert file inventory' },
+            { name: '--host', type: 'text', help: 'MySQL server hostname or IP address. Overrides the host from DATABASE_URL if both are provided.', placeholder: '162.241.218.175' },
+            { name: '--user', type: 'text', help: 'MySQL username for authentication. Overrides the user from DATABASE_URL if both are provided.', placeholder: 'jarheads_0231' },
+            { name: '--password', type: 'text', help: 'MySQL password for authentication. Overrides the password from DATABASE_URL if both are provided. Leave blank to use DATABASE_URL.', placeholder: '' },
+            { name: '--database', type: 'text', help: 'MySQL database name to create tables in. Overrides the database from DATABASE_URL if both are provided.', placeholder: 'jarheads_epstein' },
+            { name: '--port', type: 'number', help: 'MySQL server port number. Default is 3306 (standard MySQL port). Overrides the port from DATABASE_URL if both are provided.', placeholder: '3306' },
+            { name: '--drop', type: 'flag', help: 'Drop all existing tables before recreating them. WARNING: this permanently deletes all analytics data (search queries, page views, and file inventory).' },
+            { name: '--populate-files', type: 'flag', help: 'After creating tables, scan the local epstein_doj_files/ directory and insert every PDF, image, and video file into the files table with size, type, and dataset metadata.' },
         ]
     },
     {
         id: 'deploy',
         name: 'src.deploy',
         desc: 'Production Deployment',
+        description: 'Deploys source code and static files to the remote cPanel host via rsync over SSH. No data files (PDFs, thumbnails, classifications) are pushed — those are served directly from Google Cloud Storage. A full deployment syncs source code, the SQLite search index, classification JSONs, installs dependencies, writes the .env file (including GCS_BASE_URL), and restarts the Gunicorn server process.',
         args: [
-            { name: '--check', type: 'flag', help: 'Validate remote environment only' },
-            { name: '--sync-only', type: 'flag', help: 'Sync source files only' },
-            { name: '--data-only', type: 'flag', help: 'Sync data files (SQLite, thumbnails, classifications)' },
-            { name: '--files-only', type: 'flag', help: 'Sync large files (PDFs, images, videos)' },
-            { name: '--restart', type: 'flag', help: 'Restart remote server' },
-            { name: '--stop', type: 'flag', help: 'Stop remote server' },
+            { name: '--check', type: 'flag', help: 'Validate the remote environment (SSH connectivity, Python version, disk space, running processes) without deploying any files.' },
+            { name: '--restart', type: 'flag', help: 'Restart the Gunicorn server process on the remote host without syncing any files.' },
+            { name: '--stop', type: 'flag', help: 'Stop the Gunicorn server process on the remote host. The server will not restart until a new deployment or manual start.' },
+        ]
+    },
+    {
+        id: 'gcs_sync',
+        name: 'src.gcs_sync',
+        desc: 'GCS File Sync',
+        description: 'Syncs local files to Google Cloud Storage using gcloud storage rsync. Only new or changed files are uploaded (checksum-based diffing). Use this after downloading new files from DOJ, generating thumbnails, or running the classifier to push updates to the GCS bucket. Requires the gcloud CLI and GCS_BASE_URL to be configured in .env.',
+        args: [
+            { name: '--pdfs', type: 'flag', help: 'Sync only PDFs, videos, and Google Drive files from epstein_doj_files/ to GCS. Use after running the downloader or gdrive_downloader.' },
+            { name: '--thumbnails', type: 'flag', help: 'Sync only thumbnail images from data/thumbnails/ to GCS. Use after generating new thumbnails with src.thumbnails.' },
+            { name: '--classifications', type: 'flag', help: 'Sync only classification JSON files from data/classifications/ to GCS. Use after running the classifier on new or updated datasets.' },
+            { name: '--dry-run', type: 'flag', help: 'Show what files would be uploaded without actually transferring anything. Useful for previewing sync scope before committing.' },
         ]
     },
     {
         id: 'search_cli',
         name: 'src.search',
         desc: 'CLI Search',
+        description: 'Full-text search across all extracted PDF documents from the command line. Supports boolean operators (AND, OR, NOT), quoted phrases for exact matches, and NEAR/N proximity search (e.g. "Epstein NEAR/5 island" finds the terms within 5 words of each other). Results show matching filenames, page numbers, and context snippets. Omit the query argument to enter interactive mode with a persistent search prompt.',
         args: [
-            { name: 'query', type: 'text', positional: true, help: 'Search query (omit for interactive mode)', placeholder: 'Maxwell AND island' },
-            { name: '--dataset', type: 'number', help: 'Filter by dataset (1-12)', placeholder: '' },
-            { name: '--sort', type: 'select', help: 'Sort results', choices: ['relevance', 'filename', 'dataset'] },
-            { name: '--export', type: 'select', help: 'Export format', choices: ['', 'csv', 'json'] },
-            { name: '--min-pages', type: 'number', help: 'Minimum page count', placeholder: '0' },
-            { name: '--max-pages', type: 'number', help: 'Maximum page count', placeholder: '' },
+            { name: 'query', type: 'text', positional: true, help: 'The search query string. Supports AND, OR, NOT boolean operators, "quoted phrases" for exact matching, and NEAR/N for proximity search. Omit entirely to enter interactive mode with a persistent prompt.', placeholder: 'Maxwell AND island' },
+            { name: '--dataset', type: 'number', help: 'Filter results to a single dataset number (1-12). Without this filter, all datasets are searched.', placeholder: '' },
+            { name: '--sort', type: 'select', help: 'Sort order for results. "relevance" (default) sorts by match count descending. "filename" sorts alphabetically. "dataset" groups by dataset number then filename.', choices: ['relevance', 'filename', 'dataset'] },
+            { name: '--export', type: 'select', help: 'Export results to a file instead of printing to the console. "csv" produces a comma-separated file and "json" produces a JSON array. The file is saved to the current directory.', choices: ['', 'csv', 'json'] },
+            { name: '--min-pages', type: 'number', help: 'Exclude documents with fewer than this many pages. Default is 0 (no minimum). Useful for filtering out single-page cover sheets.', placeholder: '0' },
+            { name: '--max-pages', type: 'number', help: 'Exclude documents with more than this many pages. No limit by default. Useful for focusing on shorter documents.', placeholder: '' },
         ]
     },
 ];
@@ -747,6 +849,7 @@ function renderCommands() {
                     <span class="command-toggle">&#9662;</span>
                 </div>
                 <div class="command-body">
+                    ${cmd.description ? `<p class="command-description">${cmd.description}</p>` : ''}
                     ${inputs.length ? `<div class="args-grid">${inputsHtml}</div>` : ''}
                     ${flags.length ? `<div style="margin-bottom:1rem;">${flagsHtml}</div>` : ''}
                     ${cmd.args.length === 0 ? '<p style="color:var(--ink-light);font-style:italic;margin-bottom:1rem;">No arguments — runs with defaults</p>' : ''}
@@ -906,8 +1009,178 @@ document.querySelectorAll('.tab').forEach(tab => {
         tab.classList.add('active');
         document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
         if (tab.dataset.tab === 'logs') loadLogs();
+        if (tab.dataset.tab === 'readme') loadReadme();
     });
 });
+
+// ─── Markdown Renderer ───────────────────────────────────────
+function renderMarkdown(md) {
+    // Normalize line endings
+    md = md.replace(/\r\n/g, '\n');
+
+    // Extract code blocks first to protect them from other processing
+    const codeBlocks = [];
+    md = md.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+        codeBlocks.push(`<pre><code>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`);
+        return `\x00CODEBLOCK${codeBlocks.length - 1}\x00`;
+    });
+
+    // Extract inline code
+    const inlineCodes = [];
+    md = md.replace(/`([^`\n]+)`/g, (_, code) => {
+        inlineCodes.push(`<code>${escapeHtml(code)}</code>`);
+        return `\x00INLINE${inlineCodes.length - 1}\x00`;
+    });
+
+    // Tables
+    md = md.replace(/^(\|.+\|)\n(\|[-| :]+\|)\n((?:\|.+\|\n?)*)/gm, (_, header, sep, body) => {
+        const ths = header.split('|').filter(c => c.trim()).map(c => `<th>${c.trim()}</th>`).join('');
+        const rows = body.trim().split('\n').map(row => {
+            const tds = row.split('|').filter(c => c.trim()).map(c => `<td>${c.trim()}</td>`).join('');
+            return `<tr>${tds}</tr>`;
+        }).join('');
+        return `<table><thead><tr>${ths}</tr></thead><tbody>${rows}</tbody></table>\n`;
+    });
+
+    // Process line by line
+    const lines = md.split('\n');
+    let html = '';
+    let inList = false;
+    let listType = '';
+    let inParagraph = false;
+
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+
+        // Code block placeholder
+        const cbMatch = line.match(/^\x00CODEBLOCK(\d+)\x00$/);
+        if (cbMatch) {
+            if (inList) { html += `</${listType}>`; inList = false; }
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            html += codeBlocks[parseInt(cbMatch[1])];
+            continue;
+        }
+
+        // Headings
+        const hMatch = line.match(/^(#{1,6})\s+(.+)$/);
+        if (hMatch) {
+            if (inList) { html += `</${listType}>`; inList = false; }
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            const level = hMatch[1].length;
+            html += `<h${level}>${inlineFormat(hMatch[2])}</h${level}>`;
+            continue;
+        }
+
+        // Horizontal rule
+        if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
+            if (inList) { html += `</${listType}>`; inList = false; }
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            html += '<hr>';
+            continue;
+        }
+
+        // Unordered list
+        const ulMatch = line.match(/^(\s*)[-*+]\s+(.+)$/);
+        if (ulMatch) {
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            if (!inList || listType !== 'ul') {
+                if (inList) html += `</${listType}>`;
+                html += '<ul>';
+                inList = true;
+                listType = 'ul';
+            }
+            html += `<li>${inlineFormat(ulMatch[2])}</li>`;
+            continue;
+        }
+
+        // Ordered list
+        const olMatch = line.match(/^(\s*)\d+\.\s+(.+)$/);
+        if (olMatch) {
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            if (!inList || listType !== 'ol') {
+                if (inList) html += `</${listType}>`;
+                html += '<ol>';
+                inList = true;
+                listType = 'ol';
+            }
+            html += `<li>${inlineFormat(olMatch[2])}</li>`;
+            continue;
+        }
+
+        // Table passthrough (already processed)
+        if (line.startsWith('<table') || line.startsWith('<thead') || line.startsWith('<tbody') || line.startsWith('<tr') || line.startsWith('</')) {
+            if (inList) { html += `</${listType}>`; inList = false; }
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            html += line;
+            continue;
+        }
+
+        // Empty line
+        if (line.trim() === '') {
+            if (inList) { html += `</${listType}>`; inList = false; }
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            continue;
+        }
+
+        // Blockquote
+        if (line.startsWith('> ')) {
+            if (inList) { html += `</${listType}>`; inList = false; }
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            html += `<blockquote><p>${inlineFormat(line.substring(2))}</p></blockquote>`;
+            continue;
+        }
+
+        // Regular paragraph text
+        if (inList) { html += `</${listType}>`; inList = false; }
+        if (!inParagraph) {
+            html += '<p>';
+            inParagraph = true;
+        } else {
+            html += ' ';
+        }
+        html += inlineFormat(line);
+    }
+
+    if (inList) html += `</${listType}>`;
+    if (inParagraph) html += '</p>';
+
+    // Restore inline codes
+    html = html.replace(/\x00INLINE(\d+)\x00/g, (_, idx) => inlineCodes[parseInt(idx)]);
+
+    return html;
+}
+
+function inlineFormat(text) {
+    // Bold + italic
+    text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+    // Bold
+    text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // Italic
+    text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // Links
+    text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    // Inline code placeholders are preserved (restored after)
+    return text;
+}
+
+// ─── README Loader ───────────────────────────────────────────
+let readmeLoaded = false;
+async function loadReadme() {
+    if (readmeLoaded) return;
+    const container = document.getElementById('readmeContent');
+    try {
+        const res = await fetch(`${BASE}/api/dashboard/readme`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        container.innerHTML = renderMarkdown(data.content);
+        container.style.color = '';
+        container.style.fontStyle = '';
+        readmeLoaded = true;
+    } catch (e) {
+        container.textContent = 'Failed to load README: ' + e.message;
+        container.style.color = 'var(--red)';
+    }
+}
 
 // ─── Log Viewer ──────────────────────────────────────────────
 let logPage = 1;

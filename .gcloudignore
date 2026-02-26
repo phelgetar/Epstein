@@ -1,0 +1,35 @@
+# Large data directories — served from GCS, not needed in container
+epstein_doj_files/
+data/thumbnails/
+data/logs/
+data/*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Git
+.git/
+.gitignore
+
+# Dev files
+archived/
+scripts/
+docs/
+*.md
+.env
+.claude/
+texput.dvi
+
+# Modules not needed on server
+src/downloader.py
+src/video_downloader.py
+src/mp4_checker.py
+src/gdrive_downloader.py
+src/extractor.py
+src/extractor_plumber.py
+src/thumbnails.py
+src/classifier.py
+src/gcs_sync.py
+src/deploy.py

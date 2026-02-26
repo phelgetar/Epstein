@@ -1145,7 +1145,8 @@
                 : '';
 
             const firstPage = (result.contexts.length > 0 && result.contexts[0].page) ? result.contexts[0].page : null;
-            const pdfPageArg = firstPage ? `, ${firstPage}` : '';
+            const pdfPageArg = firstPage ? `, ${firstPage}` : ', null';
+            const gcsUrlArg = result.url ? `, '${escapeHtml(result.url).replace(/'/g, "\\'")}'` : '';
 
             return `
                 <div class="result-item" style="animation-delay: ${(index % 20) * 0.03}s">
@@ -1160,7 +1161,7 @@
                     <div class="result-body">
                         ${matchesHtml}
                         ${toggleAllHtml}
-                        <button class="pdf-link" onclick="openPdfModal('${escapeHtml(result.filepath).replace(/'/g, "\\'")}', '${escapeHtml(result.filename).replace(/'/g, "\\'")}'${pdfPageArg})">
+                        <button class="pdf-link" onclick="openPdfModal('${escapeHtml(result.filepath).replace(/'/g, "\\'")}', '${escapeHtml(result.filename).replace(/'/g, "\\'")}'${pdfPageArg}${gcsUrlArg})">
                             View PDF
                         </button>
                     </div>
@@ -1354,8 +1355,8 @@
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
             (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-        function openPdfModal(filepath, filename, pageNumber) {
-            const fullPath = BASE_PATH + filepath;
+        function openPdfModal(filepath, filename, pageNumber, gcsUrl) {
+            const fullPath = gcsUrl || (BASE_PATH + filepath);
             const url = pageNumber ? fullPath + '#page=' + pageNumber : fullPath;
 
             // iOS: open in new tab where Safari's native viewer works fully
