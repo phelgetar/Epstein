@@ -196,32 +196,140 @@ python -m src.search "Epstein" --export csv      # Export as CSV/JSON
 python -m src.search                             # Interactive mode
 ```
 
-## Typical Workflow: Adding New DOJ Files
+## Operations Guide
 
-When new datasets are released on justice.gov:
+The pipeline has a strict dependency order. Always run steps in the order shown — later steps depend on output from earlier ones.
+
+### Pipeline Overview
+
+```
+Download → Extract → Build Index → Thumbnails → Classify → GCS Sync → Deploy
+   (1)       (2)        (3)          (4)          (5)        (6)        (7)
+```
+
+- **Steps 1-3 are required** for search to work (extract produces JSON, build_index creates SQLite DB)
+- **Step 4** is required for gallery/image browsing
+- **Step 5** is optional (AI classification costs ~$0.20/1000 images)
+- **Steps 6-7** push changes to production
+
+### Scenario A: New DOJ Dataset Released
+
+When a new dataset appears on [justice.gov/epstein](https://www.justice.gov/epstein/doj-disclosures):
+
+```bash
+# 1. Download the new dataset (replace N with the dataset number)
+python -m src.downloader --dataset N
+
+# 2. Re-extract all files (rebuilds JSON with new dataset included)
+python -m src.extractor
+
+# 3. Rebuild search index (must run after extractor)
+python -m src.build_index --force
+
+# 4. Generate thumbnails for the new dataset
+python -m src.thumbnails --dataset N
+
+# 5. Classify new thumbnails (optional, requires GOOGLE_API_KEY)
+python -m src.classifier --dataset N
+
+# 6. Upload new files to GCS
+python -m src.gcs_sync --pdfs              # Upload PDFs
+python -m src.gcs_sync --thumbnails        # Upload thumbnails
+python -m src.gcs_sync --classifications   # Upload classifications (if step 5 ran)
+gcloud storage cp data/epstein_search.db gs://epstein-doj-files-jarheads/data/epstein_search.db
+
+# 7. Deploy updated server
+gcloud run deploy epstein-server --source . \
+  --project=epstein-doj-files --region=us-central1 \
+  --allow-unauthenticated
+```
+
+### Scenario B: New Google Drive Files Added
+
+When new files appear in the shared Google Drive folder:
 
 ```bash
 # 1. Download new files
-python -m src.downloader --dataset 13
+python -m src.gdrive_downloader
 
-# 2. Extract text
+# 2. Re-extract (includes new GDrive files in JSON)
 python -m src.extractor
 
-# 3. Generate thumbnails
-python -m src.thumbnails --dataset 13
-
-# 4. Classify images
-python -m src.classifier --dataset 13
-
-# 5. Rebuild search index
+# 3. Rebuild search index
 python -m src.build_index --force
 
-# 6. Sync new files to GCS
-python -m src.gcs_sync
+# 4. Generate thumbnails for image datasets (13-24)
+python -m src.thumbnails --dataset 13 14 15 16 17 18 19 20 21 22 23 24
 
-# 7. Deploy updated server
-python -m src.deploy
+# 5. Classify new thumbnails (optional)
+python -m src.classifier --dataset 13-24
+
+# 6. Upload to GCS
+python -m src.gcs_sync                     # Sync all file types
+gcloud storage cp data/epstein_search.db gs://epstein-doj-files-jarheads/data/epstein_search.db
+
+# 7. Deploy
+gcloud run deploy epstein-server --source . \
+  --project=epstein-doj-files --region=us-central1 \
+  --allow-unauthenticated
 ```
+
+### Scenario C: Code-Only Changes (No New Files)
+
+When you've modified source code or HTML but haven't added new documents:
+
+```bash
+# Just redeploy — no pipeline steps needed
+gcloud run deploy epstein-server --source . \
+  --project=epstein-doj-files --region=us-central1 \
+  --allow-unauthenticated
+```
+
+### Scenario D: Re-classify Existing Images
+
+To re-run classification (e.g., after improving the prompt or switching models):
+
+```bash
+# Reclassify specific datasets (--force overwrites existing classifications)
+python -m src.classifier --dataset 1-12 --force
+
+# Upload updated classifications
+python -m src.gcs_sync --classifications
+
+# Redeploy (Docker build downloads fresh classifications from GCS)
+gcloud run deploy epstein-server --source . \
+  --project=epstein-doj-files --region=us-central1 \
+  --allow-unauthenticated
+```
+
+### Scenario E: Check What's Currently Downloaded
+
+```bash
+# Count local PDFs per dataset
+for i in $(seq 1 12); do echo "data-set-$i: $(ls epstein_doj_files/data-set-$i/*.pdf 2>/dev/null | wc -l) files"; done
+
+# Count Google Drive files
+find epstein_doj_files/Google_Drive_Files -type f | wc -l
+
+# Check search index stats
+python -c "import sqlite3; c=sqlite3.connect('data/epstein_search.db'); print(c.execute('SELECT COUNT(*) FROM documents').fetchone()[0], 'documents indexed')"
+
+# Dry-run the downloader to see if justice.gov has new files
+python -m src.downloader --dry-run
+```
+
+### Quick Reference: Step Dependencies
+
+| Step | Command | Depends On | Produces |
+|------|---------|------------|----------|
+| Download DOJ | `python -m src.downloader` | — | `epstein_doj_files/data-set-N/*.pdf` |
+| Download GDrive | `python -m src.gdrive_downloader` | — | `epstein_doj_files/Google_Drive_Files/` |
+| Extract | `python -m src.extractor` | Downloaded files | `data/*.json` |
+| Build Index | `python -m src.build_index --force` | `data/*.json` | `data/epstein_search.db` |
+| Thumbnails | `python -m src.thumbnails` | Downloaded files | `data/thumbnails/data-set-N/` |
+| Classify | `python -m src.classifier` | Thumbnails | `data/classifications/data-set-N.json` |
+| GCS Sync | `python -m src.gcs_sync` | Any of the above | Files on GCS bucket |
+| Deploy | `gcloud run deploy ...` | GCS sync (for DB + classifications) | Live Cloud Run service |
 
 ## Project Structure
 
