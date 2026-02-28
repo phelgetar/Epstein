@@ -37,7 +37,7 @@ from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
-    THUMB_DIR, NUM_DATASETS,
+    THUMB_DIR, NUM_DATASETS, DATASET_REGISTRY,
     CLASSIFY_DIR, CLASSIFY_MODEL, CLASSIFY_WORKERS, CLASSIFY_RPM,
     CLASSIFY_SAVE_INTERVAL,
 )
@@ -163,6 +163,11 @@ def classify_image(client, thumb_path, rate_limiter):
 def classify_dataset(dataset_num, client, rate_limiter, workers,
                      force, dry_run, cost_state, interrupted):
     """Classify all thumbnails in a dataset. Returns (classified, skipped, failed)."""
+    # Skip media datasets (no images to classify)
+    ds_info = DATASET_REGISTRY.get(dataset_num)
+    if ds_info and ds_info.file_type == "media":
+        return 0, 0, 0
+
     thumb_dir = THUMB_DIR / f"data-set-{dataset_num}"
     if not thumb_dir.exists():
         return 0, 0, 0
@@ -287,6 +292,7 @@ def classify_dataset(dataset_num, client, rate_limiter, workers,
 
 def _parse_datasets(spec: str) -> list[int]:
     """Parse dataset spec like '1,3,7-11' into a sorted list of ints."""
+    valid_ids = set(DATASET_REGISTRY.keys())
     result = set()
     for part in spec.split(","):
         part = part.strip()
@@ -296,14 +302,14 @@ def _parse_datasets(spec: str) -> list[int]:
             if lo > hi:
                 lo, hi = hi, lo
             for d in range(lo, hi + 1):
-                if d < 1 or d > NUM_DATASETS:
-                    print(f"Error: Dataset {d} is out of range (1-{NUM_DATASETS})")
+                if d not in valid_ids:
+                    print(f"Error: Dataset {d} is not in the registry (valid: {sorted(valid_ids)})")
                     sys.exit(1)
                 result.add(d)
         else:
             d = int(part)
-            if d < 1 or d > NUM_DATASETS:
-                print(f"Error: Dataset {d} is out of range (1-{NUM_DATASETS})")
+            if d not in valid_ids:
+                print(f"Error: Dataset {d} is not in the registry (valid: {sorted(valid_ids)})")
                 sys.exit(1)
             result.add(d)
     return sorted(result)
@@ -364,7 +370,7 @@ def main():
         print("  export GOOGLE_API_KEY='your-api-key-here'")
         sys.exit(1)
 
-    datasets = _parse_datasets(args.dataset) if args.dataset else list(range(1, NUM_DATASETS + 1))
+    datasets = _parse_datasets(args.dataset) if args.dataset else sorted(DATASET_REGISTRY.keys())
 
     start_time = time.time()
 

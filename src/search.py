@@ -283,6 +283,12 @@ class SQLiteSearcher:
         # Step 3: Remove AND (FTS5 uses implicit AND)
         working = re.sub(r"\s+AND\s+", " ", working, flags=re.IGNORECASE)
 
+        # Step 4: Replace hyphens inside terms with spaces
+        # FTS5 treats '-' as NOT operator; unicode61 tokenizer splits on hyphens
+        # so "DOJ-OGR" should become "DOJ OGR" (implicit AND), not "DOJ NOT OGR"
+        # Only replace hyphens within words (not standalone "-" or operator context)
+        working = re.sub(r'(?<=\w)-(?=\w)', ' ', working)
+
         # Restore phrases and return
         return restore(working).strip()
 

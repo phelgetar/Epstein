@@ -22,9 +22,10 @@ RUN mkdir -p data/logs data/thumbnails data/classifications && \
     curl -fsSL -o data/epstein_search.db \
         "https://storage.googleapis.com/epstein-doj-files-jarheads/data/epstein_search.db" && \
     echo "Downloading classifications from GCS..." && \
-    for i in 1 2 3 4 5 6 7 8 10 11 12; do \
+    for i in 1 2 3 4 5 6 7 8 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do \
         curl -fsSL -o "data/classifications/data-set-${i}.json" \
-            "https://storage.googleapis.com/epstein-doj-files-jarheads/data/classifications/data-set-${i}.json"; \
+            "https://storage.googleapis.com/epstein-doj-files-jarheads/data/classifications/data-set-${i}.json" \
+            || true; \
     done && \
     echo "Data download complete"
 

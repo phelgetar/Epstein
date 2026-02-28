@@ -55,7 +55,7 @@ from src.config import (
     PROJECT_ROOT, STATIC_DIR, DATA_DIR, PDF_DIR, THUMB_DIR, CLASSIFY_DIR,
     SERVER_HOST, PREFERRED_PORT, PORT_RANGE,
     JSON_SEARCH_INDEX, JSON_FULL, LOG_FILE, SEARCH_DB, BASE_PATH, DATABASE_URL,
-    GCS_BASE_URL,
+    GCS_BASE_URL, DATASET_REGISTRY, NUM_DATASETS,
 )
 from src.logging_setup import setup_logging
 from src.search import PDFSearcher, SQLiteSearcher, _parse_and_search
@@ -234,7 +234,7 @@ async def lifespan(app: FastAPI):
             print("Run the extractor first: python -m src.extractor\n")
 
     # Initial classification load
-    for ds in range(1, 13):
+    for ds in DATASET_REGISTRY:
         _load_classifications(ds)
 
     cls_count = sum(
@@ -297,7 +297,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "script-src 'self' 'unsafe-inline'; "
                 f"img-src 'self' data: {gcs}; "
                 f"frame-src 'self' {gcs}; "
-                f"object-src 'self' {gcs};"
+                f"object-src 'self' {gcs}; "
+                f"media-src 'self' {gcs};"
             )
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
 
@@ -362,13 +363,27 @@ async def stats():
     return doc_stats
 
 
+@router.get("/api/datasets")
+async def datasets_api():
+    """Return the dataset registry for dynamic dropdown population."""
+    result = []
+    for ds_id in sorted(DATASET_REGISTRY.keys()):
+        ds = DATASET_REGISTRY[ds_id]
+        result.append({
+            "id": ds.id,
+            "name": ds.name,
+            "file_type": ds.file_type,
+        })
+    return {"datasets": result}
+
+
 @router.get("/api/search")
 async def search_api(
     request: Request,
     q: str = Query(..., min_length=1, description="Search query"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=10000),
-    dataset: Optional[int] = Query(None, ge=1, le=12),
+    dataset: Optional[int] = Query(None, ge=1, le=NUM_DATASETS),
     min_pages: int = Query(0, ge=0),
     max_pages: Optional[int] = Query(None, ge=0),
     sort: str = Query("relevance", pattern="^(relevance|filename|dataset)$"),
@@ -536,7 +551,7 @@ def _get_dataset_images(ds: int, content_type: str = None,
 
 @router.get("/api/gallery")
 async def gallery_api(
-    dataset: Optional[int] = Query(None, ge=1, le=12),
+    dataset: Optional[int] = Query(None, ge=1, le=NUM_DATASETS),
     page: int = Query(1, ge=1),
     per_page: int = Query(100, ge=1, le=10000),
     content_type: Optional[str] = Query(None),
@@ -546,7 +561,7 @@ async def gallery_api(
     """List thumbnail images, paginated, with optional filters. dataset=None means all.
     tag: comma-separated list of tags — image must match ALL (AND logic).
     """
-    datasets_to_query = [dataset] if dataset is not None else list(range(1, 13))
+    datasets_to_query = [dataset] if dataset is not None else sorted(DATASET_REGISTRY.keys())
     tags = [t.strip() for t in tag.split(",") if t.strip()] if tag else None
 
     all_items = []
@@ -585,9 +600,9 @@ async def gallery_api(
 _classification_stats_cache: dict = {}  # key: dataset int or None (all)
 
 @router.get("/api/classifications/stats")
-async def classification_stats(dataset: Optional[int] = Query(None, ge=1, le=12)):
+async def classification_stats(dataset: Optional[int] = Query(None, ge=1, le=NUM_DATASETS)):
     """Return available content_types, top tags, and top people for dataset(s)."""
-    datasets_to_query = [dataset] if dataset is not None else list(range(1, 13))
+    datasets_to_query = [dataset] if dataset is not None else sorted(DATASET_REGISTRY.keys())
     for ds in datasets_to_query:
         _load_classifications(ds)
 
@@ -634,11 +649,11 @@ async def classification_stats(dataset: Optional[int] = Query(None, ge=1, le=12)
 @router.get("/api/tags/autocomplete")
 async def tags_autocomplete(
     q: str = Query("", description="Tag prefix to match"),
-    dataset: Optional[int] = Query(None, ge=1, le=12),
+    dataset: Optional[int] = Query(None, ge=1, le=NUM_DATASETS),
     limit: int = Query(10, ge=1, le=100),
 ):
     """Return tags matching a prefix, sorted by frequency."""
-    datasets_to_query = [dataset] if dataset is not None else list(range(1, 13))
+    datasets_to_query = [dataset] if dataset is not None else sorted(DATASET_REGISTRY.keys())
     for ds in datasets_to_query:
         _load_classifications(ds)
 

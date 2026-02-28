@@ -4,6 +4,7 @@ All paths, ports, and security settings in one place.
 """
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 # Project root (parent of src/)
@@ -24,7 +25,48 @@ GCS_BASE_URL = os.environ.get("GCS_BASE_URL", "").rstrip("/")  # e.g. "https://s
 # Data source
 SOURCE_URL = "https://www.justice.gov/epstein/doj-disclosures"
 SEARCH_URL = "https://www.justice.gov/epstein/search"
-NUM_DATASETS = 12
+
+
+# ─── Dataset Registry ────────────────────────────────────────
+@dataclass
+class DatasetInfo:
+    id: int
+    name: str           # Display name (e.g. "Data Set 1", "GDrive IMAGES001")
+    source_dir: Path    # Directory containing source files
+    file_type: str      # "pdf", "image", or "media"
+    file_globs: list    # e.g. ["*.pdf"] or ["*.jpg", "*.tif"]
+
+
+DATASET_REGISTRY: dict[int, DatasetInfo] = {}
+
+# DOJ datasets 1-12 (PDFs)
+for _i in range(1, 13):
+    DATASET_REGISTRY[_i] = DatasetInfo(
+        id=_i, name=f"Data Set {_i}",
+        source_dir=PDF_DIR / f"data-set-{_i}",
+        file_type="pdf", file_globs=["*.pdf"],
+    )
+
+# Google Drive IMAGES 13-24 (JPG/TIF page scans)
+GDRIVE_DIR = PDF_DIR / "Google_Drive_Files"
+for _i in range(1, 13):
+    _ds_id = 12 + _i
+    DATASET_REGISTRY[_ds_id] = DatasetInfo(
+        id=_ds_id, name=f"GDrive IMAGES{_i:03d}",
+        source_dir=GDRIVE_DIR / "IMAGES" / f"IMAGES{_i:03d}",
+        file_type="image", file_globs=["*.jpg", "*.tif"],
+    )
+
+# Google Drive NATIVES 25-28 (MP4/WAV media)
+_NATIVE_MAP = {25: "NATIVE006", 26: "NATIVE008", 27: "NATIVE011", 28: "NATIVE012"}
+for _ds_id, _folder in _NATIVE_MAP.items():
+    DATASET_REGISTRY[_ds_id] = DatasetInfo(
+        id=_ds_id, name=f"GDrive {_folder}",
+        source_dir=GDRIVE_DIR / "NATIVES" / _folder,
+        file_type="media", file_globs=["*.MP4", "*.WAV", "*.mp4", "*.wav"],
+    )
+
+NUM_DATASETS = max(DATASET_REGISTRY.keys())  # 28
 
 # JSON output filenames (stored in DATA_DIR)
 JSON_FULL = "epstein_pdfs_full.json"
@@ -52,7 +94,6 @@ VIDEO_DOWNLOAD_WORKERS = 10
 VIDEO_BATCH_SIZE = 10
 
 # Google Drive download settings
-GDRIVE_DIR = PDF_DIR / "Google_Drive_Files"
 GDRIVE_FOLDER_ID = "1cyc_2BkQQYaocMOYj87lWbA4BAN_URWz"
 
 # Thumbnail settings

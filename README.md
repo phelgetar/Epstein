@@ -6,8 +6,8 @@ Tools for downloading, extracting, searching, and browsing the publicly released
 
 - **Downloader** — Playwright-based PDF downloader with stealth patches to bypass Akamai CDN, batched pagination, and multithreaded downloads
 - **Google Drive Downloader** — Downloads files from shared Google Drive folders using the internal Drive API for complete file listings (no 50-file cap) with auto-discovery of API keys
-- **Extractor** — Converts downloaded PDFs to searchable JSON using Poppler (`pdftotext`/`pdfinfo`), with page-level offsets
-- **Thumbnails** — Batch JPEG thumbnail generator for all PDF pages using PyMuPDF
+- **Extractor** — Converts all files (PDFs, images, media) to searchable JSON; PDFs use Poppler (`pdftotext`/`pdfinfo`) with page-level offsets, non-PDF files are indexed by filename
+- **Thumbnails** — Batch JPEG thumbnail generator: PDF pages via PyMuPDF, JPG/TIF images via Pillow resize, media files skipped
 - **Classifier** — AI image classification using Google Gemini 2.0 Flash for tagging and person recognition
 - **CLI Search** — Full-text search with AND/OR/NOT operators, NEAR/N proximity, quoted phrases, and page references
 - **Web Interface** — Browser-based search UI with highlighted results and inline PDF viewing
@@ -96,7 +96,7 @@ Uses Google Drive's internal API for file listing (no browser, no authentication
 python -m src.extractor
 ```
 
-Processes all PDFs and creates searchable JSON files in `data/`. Only errors are printed during extraction; the summary shows total files, pages, size, and per-dataset failures.
+Processes all files across all 28 datasets (DOJ PDFs, Google Drive images, and media) and creates searchable JSON files in `data/`. Non-PDF files are indexed by filename for searchability. Only errors are printed during extraction; the summary shows total files, pages, size, and per-dataset failures.
 
 ### 4. Generate thumbnails
 
@@ -109,7 +109,7 @@ python -m src.thumbnails --width 800         # Custom width (px)
 python -m src.thumbnails --force             # Regenerate existing
 ```
 
-Renders every page of every PDF as a JPEG thumbnail into `data/thumbnails/`. Only errors are printed; the summary includes per-dataset failure counts.
+Generates thumbnails for all datasets into `data/thumbnails/`. PDF pages are rendered via PyMuPDF, JPG/TIF images are resized via Pillow, and media files (MP4/WAV) are skipped. Datasets 1-12 are DOJ PDFs, 13-24 are Google Drive images, 25-28 are media. Only errors are printed; the summary includes per-dataset failure counts.
 
 ### 5. Classify images (optional)
 

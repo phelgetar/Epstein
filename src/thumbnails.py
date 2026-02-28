@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Batch thumbnail generator for Epstein DOJ PDF files.
+Batch thumbnail generator for Epstein DOJ files.
 
-Renders every page of every PDF as a JPEG thumbnail using PyMuPDF (fitz).
-Thumbnails are stored in data/thumbnails/data-set-N/{stem}_p{page:03d}.jpg.
+Renders PDF pages as JPEG thumbnails (PyMuPDF), and resizes/converts
+JPG/TIF images (Pillow) for Google Drive datasets.
+
+Thumbnails are stored in data/thumbnails/data-set-N/.
 
 Usage:
     python -m src.thumbnails                    # Generate all datasets
@@ -22,10 +24,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import fitz  # PyMuPDF
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
-    PDF_DIR, NUM_DATASETS,
+    NUM_DATASETS, DATASET_REGISTRY,
     THUMB_DIR, THUMB_WIDTH, THUMB_QUALITY, THUMB_WORKERS,
 )
 
@@ -76,18 +79,65 @@ def render_pdf_pages(pdf_path, output_dir, width, quality, force):
         doc.close()
 
 
+def resize_image_file(image_path, output_dir, width, quality, force):
+    """Resize a JPG or convert+resize a TIF to a JPEG thumbnail.
+
+    Returns (generated, skipped, failed) counts.
+    """
+    out_path = output_dir / f"{image_path.stem}.jpg"
+
+    if out_path.exists() and not force:
+        return 0, 1, 0
+
+    try:
+        with Image.open(image_path) as img:
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            if img.width > width:
+                ratio = width / img.width
+                new_size = (width, int(img.height * ratio))
+                img = img.resize(new_size, Image.LANCZOS)
+            img.save(str(out_path), "JPEG", quality=quality)
+        return 1, 0, 0
+    except Exception as e:
+        logger.error("thumbnail_image_error", extra={"data": {
+            "filename": image_path.name,
+        }}, exc_info=True)
+        print(f"  Error: {image_path.name} — {e}")
+        return 0, 0, 1
+
+
 def generate_dataset(dataset_num, workers, width, quality, force):
-    """Generate thumbnails for all PDFs in a dataset."""
-    dataset_dir = PDF_DIR / f"data-set-{dataset_num}"
+    """Generate thumbnails for all files in a dataset."""
+    ds_info = DATASET_REGISTRY.get(dataset_num)
+    if not ds_info:
+        return 0, 0, 0
+
+    # Skip media datasets (MP4/WAV — can't generate thumbnails)
+    if ds_info.file_type == "media":
+        return 0, 0, 0
+
+    dataset_dir = ds_info.source_dir
     if not dataset_dir.exists():
         return 0, 0, 0
 
     output_dir = THUMB_DIR / f"data-set-{dataset_num}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    pdf_files = sorted(dataset_dir.glob("*.pdf"))
-    if not pdf_files:
+    # Collect source files
+    source_files = []
+    for glob_pattern in ds_info.file_globs:
+        source_files.extend(dataset_dir.glob(glob_pattern))
+    source_files.sort(key=lambda p: p.name)
+
+    if not source_files:
         return 0, 0, 0
+
+    # Choose the right render function
+    if ds_info.file_type == "pdf":
+        render_fn = render_pdf_pages
+    else:  # "image"
+        render_fn = resize_image_file
 
     total_generated = 0
     total_skipped = 0
@@ -95,14 +145,14 @@ def generate_dataset(dataset_num, workers, width, quality, force):
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {}
-        for pdf_path in pdf_files:
+        for file_path in source_files:
             future = pool.submit(
-                render_pdf_pages, pdf_path, output_dir, width, quality, force,
+                render_fn, file_path, output_dir, width, quality, force,
             )
-            futures[future] = pdf_path
+            futures[future] = file_path
 
         for future in as_completed(futures):
-            pdf_path = futures[future]
+            file_path = futures[future]
 
             try:
                 gen, skip, fail = future.result()
@@ -111,16 +161,16 @@ def generate_dataset(dataset_num, workers, width, quality, force):
                 total_failed += fail
 
                 if gen > 0:
-                    logger.info("thumbnail_pdf_complete", extra={"data": {
-                        "filename": pdf_path.name, "dataset": dataset_num,
+                    logger.info("thumbnail_file_complete", extra={"data": {
+                        "filename": file_path.name, "dataset": dataset_num,
                         "generated": gen, "skipped": skip,
                     }})
             except Exception as e:
                 total_failed += 1
-                logger.error("thumbnail_pdf_error", extra={"data": {
-                    "filename": pdf_path.name, "dataset": dataset_num,
+                logger.error("thumbnail_file_error", extra={"data": {
+                    "filename": file_path.name, "dataset": dataset_num,
                 }}, exc_info=True)
-                print(f"  Error: {pdf_path.name} — {e}")
+                print(f"  Error: {file_path.name} — {e}")
 
     logger.info("thumbnail_dataset_complete", extra={"data": {
         "dataset": dataset_num, "generated": total_generated,
@@ -167,10 +217,10 @@ def main():
     )
     args = parser.parse_args()
 
-    datasets = args.dataset or list(range(1, NUM_DATASETS + 1))
+    datasets = args.dataset or sorted(DATASET_REGISTRY.keys())
     for d in datasets:
-        if d < 1 or d > NUM_DATASETS:
-            print(f"Error: Dataset {d} is out of range (1-{NUM_DATASETS})")
+        if d not in DATASET_REGISTRY:
+            print(f"Error: Dataset {d} is not in the registry (valid: {sorted(DATASET_REGISTRY.keys())})")
             sys.exit(1)
 
     start_time = time.time()

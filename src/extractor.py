@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
     PROJECT_ROOT, DATA_DIR, PDF_DIR,
-    SOURCE_URL, NUM_DATASETS,
+    SOURCE_URL, NUM_DATASETS, DATASET_REGISTRY,
     JSON_FULL, JSON_SEARCH_INDEX, JSON_SUMMARY, JSON_FILE_LIST,
 )
 
@@ -103,6 +103,33 @@ def process_single_pdf(pdf_path):
     }
 
 
+def process_non_pdf_file(file_path, file_type):
+    """Process a non-PDF file (image or media). No text extraction — indexed by filename."""
+    stats = file_path.stat()
+    try:
+        relative_path = "/" + str(file_path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        relative_path = str(file_path)
+
+    return {
+        "filename": file_path.name,
+        "filepath": relative_path,
+        "size_bytes": stats.st_size,
+        "size_mb": round(stats.st_size / (1024 * 1024), 2),
+        "modified_date": datetime.fromtimestamp(stats.st_mtime).isoformat(),
+        "pages": 1 if file_type == "image" else 0,
+        "title": "",
+        "author": "",
+        "subject": "",
+        "creator": "",
+        "producer": "",
+        "creation_date": "",
+        "full_text": file_path.stem,  # Index the filename for searchability
+        "text_length": len(file_path.stem),
+        "word_count": 1,
+    }
+
+
 def process_all_pdfs():
     """Process all PDFs and create comprehensive JSON."""
     print("Starting PDF extraction...")
@@ -132,13 +159,14 @@ def process_all_pdfs():
     total_failed = 0
     dataset_failures = {}
 
-    for i in range(1, NUM_DATASETS + 1):
-        dataset_dir = PDF_DIR / f"data-set-{i}"
+    for ds_id in sorted(DATASET_REGISTRY.keys()):
+        ds_info = DATASET_REGISTRY[ds_id]
+        dataset_dir = ds_info.source_dir
 
         dataset = {
-            "dataset_number": i,
-            "dataset_name": f"data-set-{i}",
-            "dataset_url": f"{SOURCE_URL}/data-set-{i}-files",
+            "dataset_number": ds_id,
+            "dataset_name": ds_info.name,
+            "dataset_url": f"{SOURCE_URL}/data-set-{ds_id}-files" if ds_info.file_type == "pdf" else "",
             "files": [],
         }
 
@@ -146,22 +174,30 @@ def process_all_pdfs():
             data["datasets"].append(dataset)
             continue
 
-        pdf_files = sorted(dataset_dir.glob("*.pdf"))
-        if not pdf_files:
+        # Collect source files using globs from registry
+        source_files = []
+        for glob_pattern in ds_info.file_globs:
+            source_files.extend(dataset_dir.glob(glob_pattern))
+        source_files.sort(key=lambda p: p.name)
+
+        if not source_files:
             data["datasets"].append(dataset)
             continue
 
         ds_failed = 0
 
-        for pdf_path in pdf_files:
+        for file_path in source_files:
             try:
-                file_data = process_single_pdf(pdf_path)
+                if ds_info.file_type == "pdf":
+                    file_data = process_single_pdf(file_path)
+                else:
+                    file_data = process_non_pdf_file(file_path, ds_info.file_type)
                 dataset["files"].append(file_data)
                 total_files += 1
                 total_size += file_data["size_mb"]
                 total_pages += file_data["pages"]
-                logger.info("pdf_extracted", extra={"data": {
-                    "filename": pdf_path.name, "dataset": i,
+                logger.info("file_extracted", extra={"data": {
+                    "filename": file_path.name, "dataset": ds_id,
                     "pages": file_data["pages"],
                     "text_length": file_data["text_length"],
                     "size_mb": file_data["size_mb"],
@@ -169,13 +205,13 @@ def process_all_pdfs():
             except Exception as e:
                 ds_failed += 1
                 total_failed += 1
-                logger.error("pdf_extraction_error", extra={"data": {
-                    "filename": pdf_path.name, "dataset": i,
+                logger.error("file_extraction_error", extra={"data": {
+                    "filename": file_path.name, "dataset": ds_id,
                 }}, exc_info=True)
-                print(f"  Error: {pdf_path.name} — {e}")
+                print(f"  Error: {file_path.name} — {e}")
                 dataset["files"].append({
-                    "filename": pdf_path.name,
-                    "filepath": str(pdf_path),
+                    "filename": file_path.name,
+                    "filepath": str(file_path),
                     "error": str(e),
                 })
 
@@ -187,7 +223,7 @@ def process_all_pdfs():
             sum(f.get("size_mb", 0) for f in dataset["files"] if "size_mb" in f), 2
         )
         if ds_failed > 0:
-            dataset_failures[i] = ds_failed
+            dataset_failures[ds_id] = ds_failed
         data["datasets"].append(dataset)
 
     data["metadata"]["total_files"] = total_files

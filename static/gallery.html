@@ -722,18 +722,6 @@
                         <label class="control-label">Dataset</label>
                         <select id="datasetSelect" class="control-select">
                             <option value="all">All Datasets</option>
-                            <option value="1">Data Set 1</option>
-                            <option value="2">Data Set 2</option>
-                            <option value="3">Data Set 3</option>
-                            <option value="4">Data Set 4</option>
-                            <option value="5">Data Set 5</option>
-                            <option value="6">Data Set 6</option>
-                            <option value="7">Data Set 7</option>
-                            <option value="8">Data Set 8</option>
-                            <option value="9">Data Set 9</option>
-                            <option value="10">Data Set 10</option>
-                            <option value="11">Data Set 11</option>
-                            <option value="12">Data Set 12</option>
                         </select>
                     </div>
 
@@ -1383,8 +1371,40 @@
             return div.innerHTML;
         }
 
+        // ─── Load Dataset Dropdown ─────────────────────────────────
+
+        async function loadDatasets() {
+            try {
+                const resp = await fetch(BASE_PATH + '/api/datasets');
+                const data = await resp.json();
+                const select = document.getElementById('datasetSelect');
+
+                const groups = { pdf: [], image: [], media: [] };
+                data.datasets.forEach(ds => {
+                    (groups[ds.file_type] || groups.pdf).push(ds);
+                });
+
+                const groupLabels = { pdf: 'DOJ Data Sets', image: 'Google Drive Images', media: 'Google Drive Media' };
+                for (const [type, datasets] of Object.entries(groups)) {
+                    if (datasets.length === 0) continue;
+                    const optgroup = document.createElement('optgroup');
+                    optgroup.label = groupLabels[type] || type;
+                    datasets.forEach(ds => {
+                        const opt = document.createElement('option');
+                        opt.value = ds.id;
+                        opt.textContent = ds.name;
+                        optgroup.appendChild(opt);
+                    });
+                    select.appendChild(optgroup);
+                }
+            } catch (e) {
+                // Fallback: leave empty (just "All Datasets")
+            }
+        }
+
         // ─── Init ────────────────────────────────────────────────────
 
+        loadDatasets();
         loadPage();
     </script>
 </body>
