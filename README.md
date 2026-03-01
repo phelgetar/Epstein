@@ -23,11 +23,11 @@ All data files (PDFs, thumbnails, classifications, Google Drive files) are hoste
 
 ```
 Local Machine                    GCS Bucket                      Cloud Run
-┌──────────────┐    gcs_sync     ┌──────────────────┐             ┌─────────────┐
-│ PDFs (176 GB)│ ──────────────> │ epstein_doj_files/│ <── browser │ src/server.py│
-│ Thumbnails   │                 │ thumbnails/       │             │ static/      │
-│ Classifications│               │ classifications/  │             │ search index │
-└──────────────┘                 └──────────────────┘             └─────────────┘
+┌────────────────┐    gcs_sync     ┌───────────────────┐             ┌──────────────┐
+│  PDFs (176 GB) │ ──────────────> │ epstein_doj_files/│ <── browser │ src/server.py│
+│   Thumbnails   │                 │ thumbnails/       │             │ static/      │
+│ Classifications│                 │ classifications/  │             │ search index │
+└────────────────┘                 └───────────────────┘             └──────────────┘
                                   epstein.jarheads.net → Cloud Run service
 ```
 

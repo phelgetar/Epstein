@@ -662,8 +662,8 @@ const COMMANDS = [
     {
         id: 'extractor',
         name: 'src.extractor',
-        desc: 'PDF to JSON Converter',
-        description: 'Extracts full text from all downloaded PDFs using Poppler\'s pdftotext and pdfinfo command-line tools. Produces page-level text with form-feed delimiters and character offsets, enabling page-number references in search results. Outputs multiple JSON files to data/: a full extraction (with all text), a summary (with text previews), a flat search index, and a file listing. Requires Poppler to be installed (brew install poppler on macOS).',
+        desc: 'File to JSON Converter',
+        description: 'Extracts text and metadata from all files across all 28 datasets. PDFs (datasets 1-12) are processed using Poppler\'s pdftotext and pdfinfo with page-level text offsets. Google Drive images (datasets 13-24) and media files (datasets 25-28) are indexed by filename for searchability. Outputs multiple JSON files to data/: a full extraction, a summary, a flat search index, and a file listing. Requires Poppler to be installed (brew install poppler on macOS) for PDF extraction.',
         args: []
     },
     {
@@ -719,14 +719,11 @@ const COMMANDS = [
     },
     {
         id: 'deploy',
-        name: 'src.deploy',
-        desc: 'Production Deployment',
-        description: 'Deploys source code and static files to the remote cPanel host via rsync over SSH. No data files (PDFs, thumbnails, classifications) are pushed — those are served directly from Google Cloud Storage. A full deployment syncs source code, the SQLite search index, classification JSONs, installs dependencies, writes the .env file (including GCS_BASE_URL), and restarts the Gunicorn server process.',
-        args: [
-            { name: '--check', type: 'flag', help: 'Validate the remote environment (SSH connectivity, Python version, disk space, running processes) without deploying any files.' },
-            { name: '--restart', type: 'flag', help: 'Restart the Gunicorn server process on the remote host without syncing any files.' },
-            { name: '--stop', type: 'flag', help: 'Stop the Gunicorn server process on the remote host. The server will not restart until a new deployment or manual start.' },
-        ]
+        name: 'gcloud run deploy',
+        desc: 'Cloud Run Deployment',
+        raw: 'gcloud run deploy epstein-server --source . --project=epstein-doj-files --region=us-central1 --allow-unauthenticated',
+        description: 'Deploys to Google Cloud Run. Builds a Docker image via Cloud Build that downloads the SQLite search DB and classification JSONs from GCS during the build step (baked into read-only image layers). The service runs with 1 Gunicorn/Uvicorn worker, 2 GB memory, serving search API requests. PDFs, thumbnails, and media are served directly from GCS. Run this after syncing updated data to GCS.',
+        args: []
     },
     {
         id: 'gcs_sync',
@@ -744,7 +741,7 @@ const COMMANDS = [
         id: 'search_cli',
         name: 'src.search',
         desc: 'CLI Search',
-        description: 'Full-text search across all extracted PDF documents from the command line. Supports boolean operators (AND, OR, NOT), quoted phrases for exact matches, and NEAR/N proximity search (e.g. "Epstein NEAR/5 island" finds the terms within 5 words of each other). Results show matching filenames, page numbers, and context snippets. Omit the query argument to enter interactive mode with a persistent search prompt.',
+        description: 'Full-text search across all indexed documents (PDFs, images, media) from the command line. Supports boolean operators (AND, OR, NOT), quoted phrases for exact matches, and NEAR/N proximity search (e.g. "Epstein NEAR/5 island" finds the terms within 5 words of each other). Results show matching filenames, page numbers, and context snippets. Non-PDF files (Google Drive images/media) are searchable by filename. Omit the query argument to enter interactive mode with a persistent search prompt.',
         args: [
             { name: 'query', type: 'text', positional: true, help: 'The search query string. Supports AND, OR, NOT boolean operators, "quoted phrases" for exact matching, and NEAR/N for proximity search. Omit entirely to enter interactive mode with a persistent prompt.', placeholder: 'Maxwell AND island' },
             { name: '--dataset', type: 'number', help: 'Filter results to a single dataset number (1-28). Without this filter, all datasets are searched.', placeholder: '' },
@@ -843,7 +840,7 @@ function renderCommands() {
             <div class="command-card" id="card-${cmd.id}">
                 <div class="command-header" onclick="toggleCard('${cmd.id}')">
                     <div>
-                        <span class="command-name">python -m ${cmd.name}</span>
+                        <span class="command-name">${cmd.raw ? cmd.name : 'python -m ' + cmd.name}</span>
                         <span class="command-desc">${cmd.desc}</span>
                     </div>
                     <span class="command-toggle">&#9662;</span>
@@ -853,7 +850,7 @@ function renderCommands() {
                     ${inputs.length ? `<div class="args-grid">${inputsHtml}</div>` : ''}
                     ${flags.length ? `<div style="margin-bottom:1rem;">${flagsHtml}</div>` : ''}
                     ${cmd.args.length === 0 ? '<p style="color:var(--ink-light);font-style:italic;margin-bottom:1rem;">No arguments — runs with defaults</p>' : ''}
-                    <div class="command-preview" id="preview-${cmd.id}">python -m ${cmd.name}</div>
+                    <div class="command-preview" id="preview-${cmd.id}">${cmd.raw || 'python -m ' + cmd.name}</div>
                     <div class="command-actions">
                         <button class="btn btn-run" id="run-${cmd.id}" onclick="runCommand('${cmd.id}')">Run</button>
                         <button class="btn btn-stop" id="stop-${cmd.id}" onclick="stopCommand('${cmd.id}')" style="display:none;">Stop</button>
@@ -878,6 +875,7 @@ function toggleCard(id) {
 
 function buildCommandString(id) {
     const cmd = COMMANDS.find(c => c.id === id);
+    if (cmd.raw) return cmd.raw;
     let parts = ['python', '-m', cmd.name];
 
     cmd.args.forEach(arg => {
