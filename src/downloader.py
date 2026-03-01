@@ -478,7 +478,7 @@ def main():
     logger.info("downloader_complete", extra={"data": {
         "downloaded": grand_downloaded, "skipped": grand_skipped,
         "failed": grand_failed, "dry_run": args.dry_run,
-        "dataset_failures": dataset_failures,
+        "dataset_results": dataset_results,
     }})
 
     print(f"\n{'=' * 70}")
