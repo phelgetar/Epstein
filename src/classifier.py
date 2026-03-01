@@ -94,8 +94,9 @@ INITIAL_BACKOFF = 2.0  # seconds
 
 
 def classify_image(client, thumb_path, rate_limiter):
-    """Classify a single thumbnail image with retry on rate-limit errors.
+    """Classify a single thumbnail image with retry on transient errors.
 
+    Retries on 429, 499, 500, 503 with exponential backoff.
     Returns (filename, result_dict, tokens_used) or (filename, None, 0).
     """
     filename = thumb_path.name
@@ -138,14 +139,20 @@ def classify_image(client, thumb_path, rate_limiter):
 
         except Exception as e:
             err_str = str(e)
-            is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
-            if is_rate_limit and attempt < MAX_RETRIES - 1:
+            is_transient = any(code in err_str for code in (
+                "429", "RESOURCE_EXHAUSTED",
+                "503", "UNAVAILABLE",
+                "499", "CANCELLED",
+                "500", "INTERNAL",
+            ))
+            if is_transient and attempt < MAX_RETRIES - 1:
                 backoff = INITIAL_BACKOFF * (2 ** attempt)
-                logger.warning("classify_rate_limited", extra={"data": {
+                logger.warning("classify_transient_error", extra={"data": {
                     "filename": filename, "attempt": attempt + 1,
                     "max_retries": MAX_RETRIES, "backoff_s": backoff,
+                    "error": err_str[:200],
                 }})
-                print(f"  Rate limited on {filename}, retrying in {backoff:.0f}s "
+                print(f"  Transient error on {filename}, retrying in {backoff:.0f}s "
                       f"(attempt {attempt + 1}/{MAX_RETRIES})")
                 time.sleep(backoff)
                 continue
