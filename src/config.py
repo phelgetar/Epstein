@@ -63,7 +63,7 @@ for _ds_id, _folder in _NATIVE_MAP.items():
     DATASET_REGISTRY[_ds_id] = DatasetInfo(
         id=_ds_id, name=f"GDrive {_folder}",
         source_dir=GDRIVE_DIR / "NATIVES" / _folder,
-        file_type="media", file_globs=["*.MP4", "*.WAV", "*.mp4", "*.wav"],
+        file_type="media", file_globs=["*.MP4", "*.WAV", "*.mp4", "*.wav", "*.avi", "*.AVI", "*.mov", "*.MOV"],
     )
 
 NUM_DATASETS = max(DATASET_REGISTRY.keys())  # 28
@@ -78,7 +78,7 @@ JSON_FILE_LIST = "epstein_pdfs_file_list.json"
 SEARCH_DB = DATA_DIR / "epstein_search.db"
 
 # Allowed file extensions the server may serve
-ALLOWED_EXTENSIONS = {".html", ".json", ".pdf", ".css", ".js", ".png", ".jpg", ".jpeg", ".ico", ".mp4", ".tif", ".wav"}
+ALLOWED_EXTENSIONS = {".html", ".json", ".pdf", ".css", ".js", ".png", ".jpg", ".jpeg", ".ico", ".mp4", ".tif", ".wav", ".avi", ".mov"}
 
 # MySQL analytics database (optional)
 DATABASE_URL = os.environ.get("DATABASE_URL", "")  # mysql+pymysql://user:pass@host/db

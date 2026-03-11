@@ -2,8 +2,9 @@
 """
 Batch thumbnail generator for Epstein DOJ files.
 
-Renders PDF pages as JPEG thumbnails (PyMuPDF), and resizes/converts
-JPG/TIF images (Pillow) for Google Drive datasets.
+Renders PDF pages as JPEG thumbnails (PyMuPDF), resizes/converts
+JPG/TIF images (Pillow), and extracts video frames / generates
+audio placeholders (ffmpeg + Pillow) for Google Drive datasets.
 
 Thumbnails are stored in data/thumbnails/data-set-N/.
 
@@ -18,13 +19,15 @@ Usage:
 
 import argparse
 import logging
+import shutil
+import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import fitz  # PyMuPDF
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import (
@@ -107,14 +110,118 @@ def resize_image_file(image_path, output_dir, width, quality, force):
         return 0, 0, 1
 
 
+def extract_video_thumbnail(video_path, output_dir, width, quality, force):
+    """Extract a frame from an MP4 video using ffmpeg.
+
+    Returns (generated, skipped, failed) counts.
+    """
+    out_path = output_dir / f"{video_path.stem}.jpg"
+
+    if out_path.exists() and not force:
+        return 0, 1, 0
+
+    if not shutil.which("ffmpeg"):
+        logger.error("ffmpeg_not_found", extra={"data": {
+            "filename": video_path.name,
+        }})
+        print(f"  Error: ffmpeg not found — cannot generate thumbnail for {video_path.name}")
+        return 0, 0, 1
+
+    try:
+        # Extract frame at 1 second (or first frame if shorter)
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", str(video_path),
+                "-ss", "1", "-frames:v", "1",
+                "-vf", f"scale={width}:-1",
+                "-q:v", str(max(1, min(31, 32 - quality // 3))),
+                str(out_path),
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0 or not out_path.exists():
+            # Try first frame instead
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-i", str(video_path),
+                    "-frames:v", "1",
+                    "-vf", f"scale={width}:-1",
+                    "-q:v", str(max(1, min(31, 32 - quality // 3))),
+                    str(out_path),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+        if result.returncode != 0 or not out_path.exists():
+            raise RuntimeError(result.stderr[-200:] if result.stderr else "ffmpeg failed")
+        return 1, 0, 0
+    except Exception as e:
+        logger.error("thumbnail_video_error", extra={"data": {
+            "filename": video_path.name,
+        }}, exc_info=True)
+        print(f"  Error: {video_path.name} — {e}")
+        if out_path.exists():
+            out_path.unlink()
+        return 0, 0, 1
+
+
+def generate_audio_placeholder(audio_path, output_dir, width, quality, force):
+    """Generate a placeholder thumbnail for an audio file (WAV).
+
+    Returns (generated, skipped, failed) counts.
+    """
+    out_path = output_dir / f"{audio_path.stem}.jpg"
+
+    if out_path.exists() and not force:
+        return 0, 1, 0
+
+    try:
+        # Create a dark placeholder with audio icon text
+        height = int(width * 0.6)
+        img = Image.new("RGB", (width, height), (26, 21, 18))
+        draw = ImageDraw.Draw(img)
+
+        # Draw waveform-like bars
+        bar_count = 40
+        bar_width = max(2, width // (bar_count * 2))
+        bar_gap = max(1, bar_width)
+        total_bar_width = bar_count * (bar_width + bar_gap)
+        start_x = (width - total_bar_width) // 2
+        center_y = height // 2
+
+        import hashlib
+        seed = int(hashlib.md5(audio_path.stem.encode()).hexdigest()[:8], 16)
+        for i in range(bar_count):
+            # Pseudo-random bar height based on filename
+            h = 10 + ((seed * (i + 1) * 7 + i * 13) % (height // 3))
+            x = start_x + i * (bar_width + bar_gap)
+            y1 = center_y - h // 2
+            y2 = center_y + h // 2
+            draw.rectangle([x, y1, x + bar_width, y2], fill=(193, 68, 14))
+
+        # Add filename at bottom
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Menlo.ttc", 14)
+        except (OSError, IOError):
+            font = ImageFont.load_default()
+        label = audio_path.stem
+        bbox = draw.textbbox((0, 0), label, font=font)
+        tw = bbox[2] - bbox[0]
+        draw.text(((width - tw) // 2, height - 30), label, fill=(200, 200, 200), font=font)
+
+        img.save(str(out_path), "JPEG", quality=quality)
+        return 1, 0, 0
+    except Exception as e:
+        logger.error("thumbnail_audio_error", extra={"data": {
+            "filename": audio_path.name,
+        }}, exc_info=True)
+        print(f"  Error: {audio_path.name} — {e}")
+        return 0, 0, 1
+
+
 def generate_dataset(dataset_num, workers, width, quality, force):
     """Generate thumbnails for all files in a dataset."""
     ds_info = DATASET_REGISTRY.get(dataset_num)
     if not ds_info:
-        return 0, 0, 0
-
-    # Skip media datasets (MP4/WAV — can't generate thumbnails)
-    if ds_info.file_type == "media":
         return 0, 0, 0
 
     dataset_dir = ds_info.source_dir
@@ -136,6 +243,9 @@ def generate_dataset(dataset_num, workers, width, quality, force):
     # Choose the right render function
     if ds_info.file_type == "pdf":
         render_fn = render_pdf_pages
+    elif ds_info.file_type == "media":
+        # Per-file dispatch: video vs audio
+        render_fn = None  # handled below
     else:  # "image"
         render_fn = resize_image_file
 
@@ -146,8 +256,13 @@ def generate_dataset(dataset_num, workers, width, quality, force):
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {}
         for file_path in source_files:
+            if ds_info.file_type == "media":
+                ext = file_path.suffix.lower()
+                fn = extract_video_thumbnail if ext in (".mp4", ".avi", ".mov") else generate_audio_placeholder
+            else:
+                fn = render_fn
             future = pool.submit(
-                render_fn, file_path, output_dir, width, quality, force,
+                fn, file_path, output_dir, width, quality, force,
             )
             futures[future] = file_path
 

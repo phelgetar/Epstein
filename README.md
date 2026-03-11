@@ -7,11 +7,11 @@ Tools for downloading, extracting, searching, and browsing the publicly released
 - **Downloader** — Playwright-based PDF downloader with stealth patches to bypass Akamai CDN, batched pagination, and multithreaded downloads
 - **Google Drive Downloader** — Downloads files from shared Google Drive folders using the internal Drive API for complete file listings (no 50-file cap) with auto-discovery of API keys
 - **Extractor** — Converts all files (PDFs, images, media) to searchable JSON; PDFs use Poppler (`pdftotext`/`pdfinfo`) with page-level offsets, non-PDF files are indexed by filename
-- **Thumbnails** — Batch JPEG thumbnail generator: PDF pages via PyMuPDF, JPG/TIF images via Pillow resize, media files skipped
+- **Thumbnails** — Batch JPEG thumbnail generator: PDF pages via PyMuPDF, JPG/TIF images via Pillow resize, video frames via ffmpeg, audio waveform placeholders via Pillow
 - **Classifier** — AI image classification using Google Gemini 2.0 Flash for tagging and person recognition
 - **CLI Search** — Full-text search with AND/OR/NOT operators, NEAR/N proximity, quoted phrases, and page references
 - **Web Interface** — Browser-based search UI with highlighted results and inline PDF viewing
-- **Gallery** — Thumbnail gallery with lightbox viewer, tag autocomplete, content type and person filtering
+- **Gallery** — Thumbnail gallery with lightbox viewer, inline video/audio playback, tag autocomplete, content type and person filtering
 - **Log Viewer** — Searchable structured log viewer with level/module filtering
 - **GCS Sync** — Upload new/changed files to Google Cloud Storage for public hosting
 - **MySQL Analytics** — Optional search query and page view logging to MySQL
@@ -35,12 +35,13 @@ Local Machine                    GCS Bucket                      Cloud Run
 
 - Python 3.8+
 - [Poppler](https://poppler.freedesktop.org/) (for PDF text extraction)
+- [ffmpeg](https://ffmpeg.org/) (for video thumbnail extraction)
 - Playwright + Chromium (for downloading)
 - [Google Cloud SDK](https://cloud.google.com/sdk) (for GCS sync)
 
 ```bash
 # macOS
-brew install poppler google-cloud-sdk
+brew install poppler ffmpeg google-cloud-sdk
 
 # Ubuntu/Debian
 sudo apt install poppler-utils
@@ -109,7 +110,7 @@ python -m src.thumbnails --width 800         # Custom width (px)
 python -m src.thumbnails --force             # Regenerate existing
 ```
 
-Generates thumbnails for all datasets into `data/thumbnails/`. PDF pages are rendered via PyMuPDF, JPG/TIF images are resized via Pillow, and media files (MP4/WAV) are skipped. Datasets 1-12 are DOJ PDFs, 13-24 are Google Drive images, 25-28 are media. Only errors are printed; the summary includes per-dataset failure counts.
+Generates thumbnails for all datasets into `data/thumbnails/`. PDF pages are rendered via PyMuPDF, JPG/TIF images are resized via Pillow, video files (MP4/AVI/MOV) get a frame extracted via ffmpeg, and audio files (WAV) get a generated waveform placeholder. Datasets 1-12 are DOJ PDFs, 13-24 are Google Drive images, 25-28 are media. Only errors are printed; the summary includes per-dataset failure counts.
 
 ### 5. Classify images (optional)
 
@@ -341,7 +342,7 @@ src/
   extractor.py         — PDF to JSON converter (Poppler)
   extractor_plumber.py — Alternative extractor using pdfplumber
   classifier.py        — AI image classification (Gemini Flash)
-  thumbnails.py        — Batch PDF thumbnail generator (PyMuPDF)
+  thumbnails.py        — Batch thumbnail generator (PyMuPDF, Pillow, ffmpeg)
   search.py            — CLI search with AND/OR/NOT/NEAR and page references
   server.py            — FastAPI server with security headers and auto-reload
   build_index.py       — SQLite FTS5 index builder
@@ -373,7 +374,7 @@ The local server includes several hardening measures:
 - CORS restricted to localhost and private network origins
 - Content-Security-Policy, X-Frame-Options, X-Content-Type-Options headers
 - Path traversal protection (realpath validation)
-- File extension allowlist (`.html`, `.json`, `.pdf`, `.css`, `.js`, `.png`, `.jpg`, `.jpeg`, `.ico`, `.mp4`, `.tif`, `.wav`)
+- File extension allowlist (`.html`, `.json`, `.pdf`, `.css`, `.js`, `.png`, `.jpg`, `.jpeg`, `.ico`, `.mp4`, `.tif`, `.wav`, `.avi`, `.mov`)
 - Sentry error tracking (optional, via `SENTRY_DSN` env var)
 
 ## Environment Variables

@@ -288,6 +288,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Cache-Control"] = "public, max-age=86400"
         elif path.endswith((".jpg", ".jpeg", ".png")) and response.status_code == 200:
             response.headers["Cache-Control"] = "public, max-age=604800"
+        elif path.endswith((".mp4", ".wav", ".avi", ".mov")) and response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=86400"
         else:
             gcs = "https://storage.googleapis.com " if GCS_BASE_URL else ""
             response.headers["Content-Security-Policy"] = (
@@ -578,6 +580,28 @@ async def gallery_api(
             "src": f"{GCS_BASE_URL}/thumbnails/data-set-{ds_num}/{name}" if GCS_BASE_URL else f"{BASE_PATH}/thumbnails/data-set-{ds_num}/{name}",
             "dataset": ds_num,
         }
+        # Include file_type and media_url for media datasets
+        ds_info = DATASET_REGISTRY.get(ds_num)
+        if ds_info:
+            entry["file_type"] = ds_info.file_type
+            if ds_info.file_type == "media":
+                # Find the actual source file (thumbnail name is {stem}.jpg)
+                stem = name.rsplit(".", 1)[0] if "." in name else name
+                # Check which extension the source file has
+                source_dir = ds_info.source_dir
+                media_file = None
+                for glob_pattern in ds_info.file_globs:
+                    for f in source_dir.glob(glob_pattern):
+                        if f.stem == stem:
+                            media_file = f
+                            break
+                    if media_file:
+                        break
+                if media_file:
+                    rel_path = media_file.relative_to(PDF_DIR)
+                    entry["media_url"] = f"{GCS_BASE_URL}/epstein_doj_files/{rel_path}" if GCS_BASE_URL else f"{BASE_PATH}/epstein_doj_files/{rel_path}"
+                    entry["media_ext"] = media_file.suffix.lower()
+
         cls_data = _classifications.get(ds_num, {}).get("pages", {})
         cls = cls_data.get(name)
         if cls:

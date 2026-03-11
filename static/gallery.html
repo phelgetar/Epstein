@@ -577,6 +577,67 @@
             letter-spacing: 0.03em;
         }
 
+        /* Media overlay icons */
+        .media-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 48px;
+            height: 48px;
+            background: rgba(193, 68, 14, 0.85);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            pointer-events: none;
+        }
+
+        .gallery-item:hover .media-overlay {
+            background: var(--accent);
+            transform: translate(-50%, -50%) scale(1.1);
+        }
+
+        .media-overlay svg {
+            width: 22px;
+            height: 22px;
+            fill: white;
+        }
+
+        /* Lightbox video/audio */
+        .lightbox-video {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            max-width: calc(100% - 140px);
+            max-height: 100%;
+            outline: none;
+            border: 2px solid rgba(250, 248, 243, 0.1);
+        }
+
+        .lightbox-audio-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            width: min(600px, calc(100% - 140px));
+        }
+
+        .lightbox-audio-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 2rem;
+            fill: var(--accent-muted);
+        }
+
+        .lightbox-audio-container audio {
+            width: 100%;
+            outline: none;
+        }
+
         .filter-chips {
             display: flex;
             flex-wrap: wrap;
@@ -799,9 +860,14 @@
             </div>
             <div class="lightbox-body" id="lightboxBody">
                 <button class="lightbox-arrow left" onclick="lightboxPrev()" id="lbPrevArrow">&#8592;</button>
-                <div class="lightbox-loading" id="lbLoading"><div class="spinner"></div><div>Loading image...</div></div>
-                <div class="lightbox-error" id="lbError" style="display:none;"><div>Failed to load image</div><a onclick="retryLightbox()">Retry</a></div>
+                <div class="lightbox-loading" id="lbLoading"><div class="spinner"></div><div>Loading...</div></div>
+                <div class="lightbox-error" id="lbError" style="display:none;"><div>Failed to load</div><a onclick="retryLightbox()">Retry</a></div>
                 <img class="lightbox-img" id="lbImage" src="" alt="">
+                <video class="lightbox-video" id="lbVideo" controls style="display:none;"></video>
+                <div class="lightbox-audio-container" id="lbAudioContainer" style="display:none;">
+                    <svg class="lightbox-audio-icon" viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+                    <audio id="lbAudio" controls></audio>
+                </div>
                 <button class="lightbox-arrow right" onclick="lightboxNext()" id="lbNextArrow">&#8594;</button>
             </div>
             <div class="lightbox-footer">
@@ -827,6 +893,7 @@
         let allImages = [];          // image src paths for current page
         let imageDatasetMap = {};    // src -> dataset number
         let classificationMap = {};  // src -> {description, tags, content_type, people}
+        let mediaInfoMap = {};       // src -> {file_type, media_url, media_ext}
         let totalImages = 0;
         let currentDataset = 'all';  // 'all' or integer
         let viewPage = 1;
@@ -1102,6 +1169,7 @@
                 allImages = [];
                 imageDatasetMap = {};
                 classificationMap = {};
+                mediaInfoMap = {};
 
                 for (const item of data.images) {
                     const src = item.src;
@@ -1110,13 +1178,20 @@
                     if (item.classification) {
                         classificationMap[src] = item.classification;
                     }
+                    if (item.file_type === 'media' && item.media_url) {
+                        mediaInfoMap[src] = {
+                            file_type: item.file_type,
+                            media_url: item.media_url,
+                            media_ext: item.media_ext || '',
+                        };
+                    }
                 }
 
                 document.getElementById('loading').style.display = 'none';
 
                 if (totalImages === 0) {
                     document.getElementById('emptyMsg').style.display = 'block';
-                    document.getElementById('imageCount').textContent = '0 images';
+                    document.getElementById('imageCount').textContent = '0 items';
                     return;
                 }
 
@@ -1160,6 +1235,19 @@
                 item.appendChild(img);
                 item.appendChild(label);
 
+                // Media overlay (play icon for video, audio icon for audio)
+                const media = mediaInfoMap[src];
+                if (media) {
+                    const overlay = document.createElement('div');
+                    overlay.className = 'media-overlay';
+                    if (media.media_ext === '.wav') {
+                        overlay.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>';
+                    } else {
+                        overlay.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+                    }
+                    item.appendChild(overlay);
+                }
+
                 // Content-type badge if classified
                 const cls = classificationMap[src];
                 if (cls) {
@@ -1175,8 +1263,8 @@
             // Update count
             document.getElementById('imageCount').textContent =
                 totalPages <= 1
-                    ? `${totalImages.toLocaleString()} images`
-                    : `${(start + 1).toLocaleString()}\u2013${end.toLocaleString()} of ${totalImages.toLocaleString()} images`;
+                    ? `${totalImages.toLocaleString()} items`
+                    : `${(start + 1).toLocaleString()}\u2013${end.toLocaleString()} of ${totalImages.toLocaleString()} items`;
 
             // Pagination
             const pagInfo = document.getElementById('paginationInfo');
@@ -1226,6 +1314,11 @@
             document.getElementById('lightbox').classList.remove('active');
             document.body.style.overflow = '';
             document.removeEventListener('keydown', handleLightboxKey);
+            // Stop any playing media
+            const video = document.getElementById('lbVideo');
+            const audio = document.getElementById('lbAudio');
+            video.pause();
+            audio.pause();
             lightboxIndex = -1;
         }
 
@@ -1248,26 +1341,50 @@
             const filename = src.split('/').pop();
             const dsNum = imageDatasetMap[src] || currentDataset;
             const img = document.getElementById('lbImage');
+            const video = document.getElementById('lbVideo');
+            const audioContainer = document.getElementById('lbAudioContainer');
+            const audio = document.getElementById('lbAudio');
             const loading = document.getElementById('lbLoading');
             const error = document.getElementById('lbError');
+            const media = mediaInfoMap[src];
 
-            // Show loading, hide error
+            // Reset all media elements
             loading.style.display = '';
             error.style.display = 'none';
             img.style.display = 'none';
+            video.style.display = 'none';
+            video.pause();
+            video.removeAttribute('src');
+            audioContainer.style.display = 'none';
+            audio.pause();
+            audio.removeAttribute('src');
 
-            img.onload = function() {
+            if (media && media.media_ext !== '.wav') {
+                // Video playback
                 loading.style.display = 'none';
-                error.style.display = 'none';
-                img.style.display = '';
-            };
-            img.onerror = function() {
+                video.style.display = '';
+                video.src = media.media_url;
+                video.load();
+            } else if (media && media.media_ext === '.wav') {
+                // Audio playback
                 loading.style.display = 'none';
-                error.style.display = '';
-                img.style.display = 'none';
-            };
-
-            img.src = src + '?v=' + Date.now();
+                audioContainer.style.display = '';
+                audio.src = media.media_url;
+                audio.load();
+            } else {
+                // Image display
+                img.onload = function() {
+                    loading.style.display = 'none';
+                    error.style.display = 'none';
+                    img.style.display = '';
+                };
+                img.onerror = function() {
+                    loading.style.display = 'none';
+                    error.style.display = '';
+                    img.style.display = 'none';
+                };
+                img.src = src + '?v=' + Date.now();
+            }
 
             const perPage = getPerPage();
             const globalIdx = (viewPage - 1) * perPage + lightboxIndex;
